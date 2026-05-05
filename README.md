@@ -11,12 +11,18 @@
   
   [![npm](https://img.shields.io/npm/v/n9router.svg)](https://www.npmjs.com/package/n9router)
   [![Downloads](https://img.shields.io/npm/dm/n9router.svg)](https://www.npmjs.com/package/n9router)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/nightwalker8x/n9router.svg)](https://hub.docker.com/r/nightwalker8x/n9router)
+  [![Docker Image](https://img.shields.io/badge/docker-nightwalker8x%2Fn9router-blue)](https://hub.docker.com/r/nightwalker8x/n9router)
   [![License](https://img.shields.io/npm/l/n9router.svg)](https://github.com/nightwalker89/n9router/blob/main/LICENSE)
   
   [🚀 Quick Start](#-quick-start) • [💡 Features](#-key-features) • [📖 Setup](#-setup-guide) • [🌐 Website](https://9router.com)
 
   [🇻🇳 Tiếng Việt](./i18n/README.vi.md) • [🇨🇳 中文](./i18n/README.zh-CN.md) • [🇯🇵 日本語](./i18n/README.ja-JP.md)
 </div>
+
+---
+
+**n9router** is a self-hosted AI routing gateway and OpenAI-compatible Docker proxy for Claude Code, Cursor, Antigravity, Copilot, Codex, Gemini CLI, OpenCode, Cline, OpenClaw, and 40+ AI providers. Run it locally, on a VPS, or with the public Docker Hub image to get model fallback, quota tracking, token savings, format translation, and multi-account routing.
 
 ---
 
@@ -70,7 +76,7 @@ Result: Never stop coding, minimal cost + 20-40% token savings via RTK
 
 ## ⚡ Quick Start
 
-**1. Install globally:**
+**1. Run with npm:**
 
 ```bash
 npm install -g n9router
@@ -78,6 +84,21 @@ n9router
 ```
 
 🎉 Dashboard opens at `http://localhost:20128`
+
+**Or run with Docker:**
+
+```bash
+docker run -d \
+  --name n9router \
+  -p 20128:20128 \
+  -e JWT_SECRET="change-this-secret" \
+  -e INITIAL_PASSWORD="change-this-password" \
+  -e NEXT_PUBLIC_BASE_URL="http://localhost:20128" \
+  -v n9router-data:/app/data \
+  nightwalker8x/n9router:latest
+```
+
+Docker image: [`nightwalker8x/n9router`](https://hub.docker.com/r/nightwalker8x/n9router)
 
 **2. Connect a FREE provider (no signup needed):**
 
@@ -1137,42 +1158,73 @@ pm2 startup
 
 ### Docker
 
-```bash
-# Build image (from repository root)
-docker build -t 9router .
+Public Docker Hub image:
 
-# Run container (command used in current setup)
-docker run -d \
-  --name 9router \
-  -p 20128:20128 \
-  --env-file /root/dev/n9router/.env \
-  -v 9router-data:/app/data \
-  -v n9router-usage:/root/.n9router \
-  9router
+- [`nightwalker8x/n9router:latest`](https://hub.docker.com/r/nightwalker8x/n9router)
+- [`nightwalker8x/n9router:v0.4.25`](https://hub.docker.com/r/nightwalker8x/n9router/tags)
+
+> Current public image is published for `linux/arm64`. For `linux/amd64`, build locally from this repository or publish a multi-arch image.
+
+```bash
+docker pull nightwalker8x/n9router:latest
 ```
 
-Portable command (if you are already at repository root):
+Run with a Docker volume:
 
 ```bash
 docker run -d \
-  --name 9router \
+  --name n9router \
+  -p 20128:20128 \
+  -e JWT_SECRET="change-this-secret" \
+  -e INITIAL_PASSWORD="change-this-password" \
+  -e NEXT_PUBLIC_BASE_URL="http://localhost:20128" \
+  -v n9router-data:/app/data \
+  nightwalker8x/n9router:latest
+```
+
+Run with a local data directory:
+
+```bash
+mkdir -p ./data/n9router
+
+docker run -d \
+  --name n9router \
+  -p 20128:20128 \
+  -e JWT_SECRET="change-this-secret" \
+  -e INITIAL_PASSWORD="change-this-password" \
+  -e NEXT_PUBLIC_BASE_URL="http://localhost:20128" \
+  -v "$PWD/data/n9router:/app/data" \
+  nightwalker8x/n9router:v0.4.25
+```
+
+Run with an env file:
+
+```bash
+docker run -d \
+  --name n9router \
   -p 20128:20128 \
   --env-file ./.env \
-  -v 9router-data:/app/data \
-  -v n9router-usage:/root/.n9router \
-  9router
+  -v n9router-data:/app/data \
+  nightwalker8x/n9router:latest
+```
+
+Build locally from source:
+
+```bash
+docker build -t n9router .
 ```
 
 Container defaults:
 - `PORT=20128`
 - `HOSTNAME=0.0.0.0`
+- `DATA_DIR=/app/data`
 
 Useful commands:
 
 ```bash
-docker logs -f 9router
-docker restart 9router
-docker stop 9router && docker rm 9router
+docker logs -f n9router
+docker restart n9router
+docker stop n9router && docker rm n9router
 ```
 
 ### Environment Variables
@@ -1205,9 +1257,9 @@ Notes:
 ### Runtime Files and Storage
 
 - Main app state: `${DATA_DIR}/db.json` (providers, combos, aliases, keys, settings), managed by `src/lib/localDb.js`.
-- Usage history and logs: `~/.n9router/usage.json` and `~/.n9router/log.txt`, managed by `src/lib/usageDb.js`.
+- Usage history and logs: `${DATA_DIR}/usage.json` and `${DATA_DIR}/log.txt`, managed by `src/lib/usageDb.js`.
 - Optional request/translator logs: `<repo>/logs/...` when `ENABLE_REQUEST_LOGS=true`.
-- Usage storage currently follows `~/.n9router` path logic and is independent from `DATA_DIR`.
+- Docker persists runtime data under `/app/data`; mount this path with a named volume or host directory.
 
 </details>
 
