@@ -8,6 +8,8 @@
 - Add custom time windows for rate limits — configure limits beyond 5h/24h (15min, 1h, 6h, 12h, 24h, 7d, 30d)
 - Add CustomWindowsEditor in KeyLimitsEditor for adding/removing custom time windows with token/cost limits
 - Show API key names in CLI Tools dropdowns alongside key values (format: `sk-...xxxx (name)`)
+- Add API key usage reset feature — admins can reset usage for specific time windows (All time / 5h / 24h / 7d / 30d) with confirmation popup
+- Add reset history tracking — logs all usage reset events with tokens/cost cleared and timestamp, viewable in limits editor
 
 ### Improvements
 - Auto-fetch usage data for keys with limits on dashboard load
