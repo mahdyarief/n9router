@@ -270,7 +270,7 @@ export async function getActiveRequests() {
       const t = e.tokens || {};
       const promptTokens = t.prompt_tokens || t.input_tokens || 0;
       const completionTokens = t.completion_tokens || t.output_tokens || 0;
-      return { timestamp: e.timestamp, model: e.model, provider: e.provider || "", promptTokens, completionTokens, status: e.status || "ok" };
+      return { timestamp: e.timestamp, model: e.model, provider: e.provider || "", promptTokens, completionTokens, status: e.status || "ok", apiKey: e.apiKey || null };
     })
     .filter((e) => {
       if (e.promptTokens === 0 && e.completionTokens === 0) return false;
@@ -363,6 +363,15 @@ export async function saveRequestUsage(entry) {
 
     if (!db.data.dailySummary) db.data.dailySummary = {};
     aggregateEntryToDailySummary(db.data.dailySummary, entry);
+
+    // Record to usage limiter (SQLite + in-memory cache) for per-key rate limiting
+    if (entry.apiKey && typeof entry.apiKey === "string") {
+      try {
+        const { recordUsage } = await import("@/lib/usageLimiter.js");
+        const inputTokens = entry.tokens?.prompt_tokens || entry.tokens?.input_tokens || 0;
+        recordUsage(entry.apiKey, inputTokens, entryCost);
+      } catch {}
+    }
 
     const MAX_HISTORY = 10000;
     if (db.data.history.length > MAX_HISTORY) {
@@ -592,6 +601,7 @@ export async function getUsageStats(period = "all") {
         promptTokens: t.prompt_tokens || t.input_tokens || 0,
         completionTokens: t.completion_tokens || t.output_tokens || 0,
         status: e.status || "ok",
+        apiKey: e.apiKey || null,
       };
     })
     .filter((e) => {

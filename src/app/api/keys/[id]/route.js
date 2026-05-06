@@ -21,7 +21,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive } = body;
+    const { isActive, limits } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -31,6 +31,36 @@ export async function PUT(request, { params }) {
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
 
+    // Handle limits update
+    if (limits !== undefined) {
+      if (limits === null) {
+        // Clear all limits
+        updateData.limits = null;
+      } else if (typeof limits === "object") {
+        const LIMIT_FIELDS = ["inputTokens5h", "inputTokens24h", "cost5h", "cost24h"];
+        const validLimits = { ...(existing.limits || {}) };
+
+        for (const field of LIMIT_FIELDS) {
+          if (!(field in limits)) continue;
+          const val = limits[field];
+          if (val === null || val === 0) {
+            validLimits[field] = null; // null = unlimited
+          } else if (typeof val === "number" && val > 0) {
+            validLimits[field] = val;
+          } else {
+            return NextResponse.json(
+              { error: `Invalid limit value for ${field}: must be null or positive number` },
+              { status: 400 }
+            );
+          }
+        }
+
+        // If all fields are null, clear entire limits object
+        const allNull = LIMIT_FIELDS.every((f) => !validLimits[f]);
+        updateData.limits = allNull ? null : validLimits;
+      }
+    }
+
     const updated = await updateApiKey(id, updateData);
 
     return NextResponse.json({ key: updated });
@@ -39,6 +69,7 @@ export async function PUT(request, { params }) {
     return NextResponse.json({ error: "Failed to update key" }, { status: 500 });
   }
 }
+
 
 // DELETE /api/keys/[id] - Delete API key
 export async function DELETE(request, { params }) {
