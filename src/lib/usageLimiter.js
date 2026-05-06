@@ -11,10 +11,21 @@
  * - Instant startup — one SELECT SUM() GROUP BY rebuilds totals in ~1ms
  */
 
-import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 import { DATA_DIR } from "@/lib/dataDir.js";
+
+// ─── Better-SQLite3 with graceful fallback ──────────────────
+let Database = null;
+let sqliteAvailable = false;
+try {
+  const betterSqlite = await import("better-sqlite3");
+  Database = betterSqlite.default;
+  sqliteAvailable = true;
+} catch (err) {
+  console.warn("[usageLimiter] better-sqlite3 not available:", err.message);
+  console.warn("[usageLimiter] API key usage limiting will be disabled.");
+}
 
 const DB_PATH = path.join(DATA_DIR, "usage-limits.db");
 const WINDOW_5H_MS = 5 * 60 * 60 * 1000;
@@ -45,33 +56,40 @@ if (!global._usageLimiterStmts) {
 
 function getDb() {
   if (global._usageLimiterDb) return global._usageLimiterDb;
+  if (!sqliteAvailable) return null;
 
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  const db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL"); // concurrent reads while writing
-  db.pragma("synchronous = NORMAL"); // balanced durability/perf
+  try {
+    const db = new Database(DB_PATH);
+    db.pragma("journal_mode = WAL"); // concurrent reads while writing
+    db.pragma("synchronous = NORMAL"); // balanced durability/perf
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS usage_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      api_key TEXT NOT NULL,
-      input_tokens INTEGER NOT NULL DEFAULT 0,
-      cost REAL NOT NULL DEFAULT 0,
-      ts INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage_entries(api_key, ts);
-  `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS usage_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        api_key TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        cost REAL NOT NULL DEFAULT 0,
+        ts INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage_entries(api_key, ts);
+    `);
 
-  global._usageLimiterDb = db;
-  return db;
+    global._usageLimiterDb = db;
+    return db;
+  } catch (err) {
+    console.error("[usageLimiter] Failed to open database:", err.message);
+    return null;
+  }
 }
 
 function getStmts() {
   if (global._usageLimiterStmts) return global._usageLimiterStmts;
   const db = getDb();
+  if (!db) return null;
 
   global._usageLimiterStmts = {
     insert: db.prepare(
@@ -151,12 +169,22 @@ async function refreshLimitsCache() {
 // ─── Rolling Sums ────────────────────────────────────────────
 
 function recalcKey(apiKeyValue) {
+  if (!sqliteAvailable) {
+    totalsCache[apiKeyValue] = { inputTokens5h: 0, inputTokens24h: 0, cost5h: 0, cost24h: 0, windows: [] };
+    return;
+  }
+
   const now = Date.now();
   const cutoff5h = now - WINDOW_5H_MS;
   const cutoff24h = now - WINDOW_24H_MS;
 
   try {
-    const row = getStmts().sumByKey.get(cutoff5h, cutoff5h, apiKeyValue, cutoff24h);
+    const stmts = getStmts();
+    if (!stmts) {
+      totalsCache[apiKeyValue] = { inputTokens5h: 0, inputTokens24h: 0, cost5h: 0, cost24h: 0, windows: [] };
+      return;
+    }
+    const row = stmts.sumByKey.get(cutoff5h, cutoff5h, apiKeyValue, cutoff24h);
     totalsCache[apiKeyValue] = {
       inputTokens5h: row?.inputTokens5h || 0,
       inputTokens24h: row?.inputTokens24h || 0,
@@ -177,10 +205,14 @@ function recalcKey(apiKeyValue) {
  * @returns {{inputTokens: number, cost: number}}
  */
 function getWindowUsage(apiKeyValue, durationMs) {
+  if (!sqliteAvailable) return { inputTokens: 0, cost: 0 };
+
   const now = Date.now();
   const cutoff = now - durationMs;
   try {
-    const row = getStmts().sumByKeyWindow.get(apiKeyValue, cutoff);
+    const stmts = getStmts();
+    if (!stmts) return { inputTokens: 0, cost: 0 };
+    const row = stmts.sumByKeyWindow.get(apiKeyValue, cutoff);
     return {
       inputTokens: row?.inputTokens || 0,
       cost: row?.cost || 0,
@@ -300,10 +332,13 @@ export async function checkLimit(apiKeyValue) {
  */
 export function recordUsage(apiKeyValue, inputTokens, cost) {
   if (!apiKeyValue || typeof apiKeyValue !== "string") return;
+  if (!sqliteAvailable) return; // Silently skip if SQLite unavailable
 
   const ts = Date.now();
   try {
-    getStmts().insert.run(apiKeyValue, inputTokens || 0, cost || 0, ts);
+    const stmts = getStmts();
+    if (!stmts) return;
+    stmts.insert.run(apiKeyValue, inputTokens || 0, cost || 0, ts);
   } catch (err) {
     console.error("[usageLimiter] INSERT failed:", err.message);
     return;
@@ -335,7 +370,14 @@ export async function getUsageSummary(apiKeyValue) {
 
   let usage = { inputTokens5h: 0, inputTokens24h: 0, cost5h: 0, cost24h: 0 };
   try {
-    const row = getStmts().sumByKey.get(cutoff5h, cutoff5h, apiKeyValue, cutoff24h);
+    if (!sqliteAvailable) {
+      return { usage, limits: {}, windowUsage: {} };
+    }
+    const stmts = getStmts();
+    if (!stmts) {
+      return { usage, limits: {}, windowUsage: {} };
+    }
+    const row = stmts.sumByKey.get(cutoff5h, cutoff5h, apiKeyValue, cutoff24h);
     usage = {
       inputTokens5h: row?.inputTokens5h || 0,
       inputTokens24h: row?.inputTokens24h || 0,
@@ -401,17 +443,22 @@ export function validateWindow(win) {
 // ─── Background Recalc & Prune ───────────────────────────────
 
 function backgroundRecalcAndPrune() {
+  if (!sqliteAvailable) return; // Silently skip if SQLite unavailable
+
   try {
+    const stmts = getStmts();
+    if (!stmts) return;
+
     const now = Date.now();
     const cutoff5h = now - WINDOW_5H_MS;
     const cutoff24h = now - WINDOW_24H_MS;
     const cutoffMax = now - MAX_WINDOW_MS;
 
     // Prune entries older than max window (30 days)
-    getStmts().prune.run(cutoffMax);
+    stmts.prune.run(cutoffMax);
 
     // Recalc all active keys from SQLite
-    const rows = getStmts().sumAllKeys.all(cutoff5h, cutoff5h, cutoff24h);
+    const rows = stmts.sumAllKeys.all(cutoff5h, cutoff5h, cutoff24h);
 
     const newTotals = {};
     for (const row of rows) {
@@ -443,6 +490,10 @@ function backgroundRecalcAndPrune() {
 
 export function startBackgroundRecalc() {
   if (global._usageLimiterTimer) return;
+  if (!sqliteAvailable) {
+    console.warn("[usageLimiter] Background recalc disabled: better-sqlite3 not available");
+    return;
+  }
 
   // Initial recalc on startup — builds totals from SQLite instantly
   backgroundRecalcAndPrune();
