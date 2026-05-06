@@ -11,15 +11,45 @@ function fmtN(n) {
   return String(Math.floor(n));
 }
 
+function formatDurationCompact(ms) {
+  const minutes = Math.floor(ms / (60 * 1000));
+  const hours = Math.floor(ms / (60 * 60 * 1000));
+  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+  if (days > 0) return `${days}d`;
+  if (hours > 0) return `${hours}h`;
+  return `${minutes}m`;
+}
+
 function CompactQuota({ limits, usageData }) {
   if (!limits) return null;
   const u = usageData?.usage || null;
+  const wu = usageData?.windowUsage || {};
+
+  // Legacy 5h/24h items
   const items = [
     limits.inputTokens5h  && { label: "5h tok",  cur: u?.inputTokens5h,  max: limits.inputTokens5h },
     limits.inputTokens24h && { label: "24h tok", cur: u?.inputTokens24h, max: limits.inputTokens24h },
     limits.cost5h         && { label: "5h $",    cur: u?.cost5h,         max: limits.cost5h,  isCost: true },
     limits.cost24h        && { label: "24h $",   cur: u?.cost24h,        max: limits.cost24h, isCost: true },
   ].filter(Boolean);
+
+  // Add custom window items
+  if (limits.windows && Array.isArray(limits.windows)) {
+    for (const win of limits.windows) {
+      if (!win.durationMs) continue;
+      const tokenKey = `tokens_${win.durationMs}`;
+      const costKey = `cost_${win.durationMs}`;
+      const label = formatDurationCompact(win.durationMs);
+
+      if (win.inputTokens) {
+        items.push({ label: `${label} tok`, cur: wu[tokenKey], max: win.inputTokens });
+      }
+      if (win.cost) {
+        items.push({ label: `${label} $`, cur: wu[costKey], max: win.cost, isCost: true });
+      }
+    }
+  }
+
   if (items.length === 0) return null;
   return (
     <div className="flex items-center gap-1 mt-1 flex-wrap">

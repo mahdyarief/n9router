@@ -13,7 +13,8 @@ export const dynamic = "force-dynamic";
  * {
  *   keyId, keyName,
  *   usage: { inputTokens5h, inputTokens24h, cost5h, cost24h },
- *   limits: { inputTokens5h?, inputTokens24h?, cost5h?, cost24h? },
+ *   windowUsage: { "tokens_${durationMs}": number, "cost_${durationMs}": number },
+ *   limits: { inputTokens5h?, inputTokens24h?, cost5h?, cost24h?, windows?: [{durationMs, label, inputTokens, cost}] },
  *   status: "ok" | "warning" | "blocked" | "unlimited"
  * }
  */
@@ -31,6 +32,7 @@ export async function GET(request, { params }) {
       keyId: id,
       keyName: keyRecord.name,
       usage: summary.usage,
+      windowUsage: summary.windowUsage || {},
       limits: summary.limits,
       status: getStatus(summary),
     });
@@ -40,15 +42,31 @@ export async function GET(request, { params }) {
   }
 }
 
-function getStatus({ usage, limits }) {
+function getStatus({ usage, windowUsage, limits }) {
   if (!limits || !Object.keys(limits).length) return "unlimited";
 
+  // Build checks array with legacy fields
   const checks = [
     { limit: limits.inputTokens5h, current: usage.inputTokens5h },
     { limit: limits.inputTokens24h, current: usage.inputTokens24h },
     { limit: limits.cost5h, current: usage.cost5h },
     { limit: limits.cost24h, current: usage.cost24h },
   ];
+
+  // Add custom window checks
+  if (limits.windows && Array.isArray(limits.windows)) {
+    for (const win of limits.windows) {
+      if (!win.durationMs) continue;
+      const tokenKey = `tokens_${win.durationMs}`;
+      const costKey = `cost_${win.durationMs}`;
+      if (win.inputTokens && windowUsage[tokenKey] !== undefined) {
+        checks.push({ limit: win.inputTokens, current: windowUsage[tokenKey] });
+      }
+      if (win.cost && windowUsage[costKey] !== undefined) {
+        checks.push({ limit: win.cost, current: windowUsage[costKey] });
+      }
+    }
+  }
 
   // Blocked: any limit at or over threshold
   for (const { limit, current } of checks) {

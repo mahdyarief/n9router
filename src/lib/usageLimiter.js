@@ -22,6 +22,19 @@ const WINDOW_24H_MS = 24 * 60 * 60 * 1000;
 const RECALC_INTERVAL_MS = 60 * 1000; // self-healing every 60s
 const LIMITS_CACHE_TTL_MS = 5000; // re-read key limits from DB every 5s
 
+// ─── Predefined Window Durations ────────────────────────────
+export const PREDEFINED_DURATIONS = [
+  { label: "15 min", ms: 15 * 60 * 1000 },
+  { label: "1 hour", ms: 60 * 60 * 1000 },
+  { label: "5 hours", ms: 5 * 60 * 60 * 1000 },
+  { label: "24 hours", ms: 24 * 60 * 60 * 1000 },
+  { label: "7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+  { label: "30 days", ms: 30 * 24 * 60 * 60 * 1000 },
+];
+
+// Max window to track (30 days) - determines data retention
+const MAX_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
 // ─── SQLite Instance (global singleton) ─────────────────────
 if (!global._usageLimiterDb) {
   global._usageLimiterDb = null;
@@ -64,6 +77,7 @@ function getStmts() {
     insert: db.prepare(
       "INSERT INTO usage_entries (api_key, input_tokens, cost, ts) VALUES (?, ?, ?, ?)"
     ),
+    // Legacy hardcoded 5h/24h sums for backward compatibility
     sumByKey: db.prepare(`
       SELECT
         SUM(CASE WHEN ts >= ? THEN input_tokens ELSE 0 END) AS inputTokens5h,
@@ -84,6 +98,14 @@ function getStmts() {
       WHERE ts >= ?
       GROUP BY api_key
     `),
+    // Dynamic window sum for custom time windows
+    sumByKeyWindow: db.prepare(`
+      SELECT
+        SUM(input_tokens) AS inputTokens,
+        SUM(cost) AS cost
+      FROM usage_entries
+      WHERE api_key = ? AND ts >= ?
+    `),
     prune: db.prepare("DELETE FROM usage_entries WHERE ts < ?"),
   };
 
@@ -91,7 +113,7 @@ function getStmts() {
 }
 
 // ─── In-Memory Totals Cache ──────────────────────────────────
-// { [apiKeyValue]: { inputTokens5h, inputTokens24h, cost5h, cost24h } }
+// { [apiKeyValue]: { inputTokens5h, inputTokens24h, cost5h, cost24h, windows: [{label, ms, inputTokens, cost}] } }
 if (!global._usageLimiterTotals) {
   global._usageLimiterTotals = {};
 }
@@ -140,10 +162,32 @@ function recalcKey(apiKeyValue) {
       inputTokens24h: row?.inputTokens24h || 0,
       cost5h: row?.cost5h || 0,
       cost24h: row?.cost24h || 0,
+      windows: [], // Custom windows calculated on-demand
     };
   } catch (err) {
     console.error("[usageLimiter] recalcKey failed:", err.message);
-    totalsCache[apiKeyValue] = { inputTokens5h: 0, inputTokens24h: 0, cost5h: 0, cost24h: 0 };
+    totalsCache[apiKeyValue] = { inputTokens5h: 0, inputTokens24h: 0, cost5h: 0, cost24h: 0, windows: [] };
+  }
+}
+
+/**
+ * Calculate usage for a custom time window.
+ * @param {string} apiKeyValue
+ * @param {number} durationMs - window duration in milliseconds
+ * @returns {{inputTokens: number, cost: number}}
+ */
+function getWindowUsage(apiKeyValue, durationMs) {
+  const now = Date.now();
+  const cutoff = now - durationMs;
+  try {
+    const row = getStmts().sumByKeyWindow.get(apiKeyValue, cutoff);
+    return {
+      inputTokens: row?.inputTokens || 0,
+      cost: row?.cost || 0,
+    };
+  } catch (err) {
+    console.error("[usageLimiter] getWindowUsage failed:", err.message);
+    return { inputTokens: 0, cost: 0 };
   }
 }
 
@@ -172,34 +216,58 @@ export async function checkLimit(apiKeyValue) {
     recalcKey(apiKeyValue);
   }
 
-  const sums = totalsCache[apiKeyValue] || { inputTokens5h: 0, inputTokens24h: 0, cost5h: 0, cost24h: 0 };
+  const sums = totalsCache[apiKeyValue] || { inputTokens5h: 0, inputTokens24h: 0, cost5h: 0, cost24h: 0, windows: [] };
 
-  const checks = [
-    {
-      field: "inputTokens5h",
-      label: "5h input token",
-      fmt: (v) => v.toLocaleString() + " tokens",
-    },
-    {
-      field: "inputTokens24h",
-      label: "24h input token",
-      fmt: (v) => v.toLocaleString() + " tokens",
-    },
-    {
-      field: "cost5h",
-      label: "5h cost",
-      fmt: (v) => "$" + v.toFixed(4),
-    },
-    {
-      field: "cost24h",
-      label: "24h cost",
-      fmt: (v) => "$" + v.toFixed(4),
-    },
-  ];
+  // Build checks array: legacy fields + custom windows
+  const checks = [];
 
-  for (const { field, label, fmt } of checks) {
-    const limit = limits[field];
-    if (limit && sums[field] >= limit) {
+  // Legacy 5h/24h fields (for backward compatibility)
+  if (limits.inputTokens5h) {
+    checks.push({ field: "inputTokens5h", limit: limits.inputTokens5h, label: "5h input token", fmt: (v) => v.toLocaleString() + " tokens", type: "legacy" });
+  }
+  if (limits.inputTokens24h) {
+    checks.push({ field: "inputTokens24h", limit: limits.inputTokens24h, label: "24h input token", fmt: (v) => v.toLocaleString() + " tokens", type: "legacy" });
+  }
+  if (limits.cost5h) {
+    checks.push({ field: "cost5h", limit: limits.cost5h, label: "5h cost", fmt: (v) => "$" + v.toFixed(4), type: "legacy" });
+  }
+  if (limits.cost24h) {
+    checks.push({ field: "cost24h", limit: limits.cost24h, label: "24h cost", fmt: (v) => "$" + v.toFixed(4), type: "legacy" });
+  }
+
+  // Custom windows
+  if (limits.windows && Array.isArray(limits.windows)) {
+    for (const win of limits.windows) {
+      if (!win.durationMs || (!win.inputTokens && !win.cost)) continue;
+      const usage = getWindowUsage(apiKeyValue, win.durationMs);
+      if (win.inputTokens) {
+        checks.push({
+          field: `window_${win.durationMs}_tokens`,
+          limit: win.inputTokens,
+          label: `${formatDuration(win.durationMs)} input token`,
+          fmt: (v) => v.toLocaleString() + " tokens",
+          type: "window",
+          durationMs: win.durationMs,
+          current: usage.inputTokens,
+        });
+      }
+      if (win.cost) {
+        checks.push({
+          field: `window_${win.durationMs}_cost`,
+          limit: win.cost,
+          label: `${formatDuration(win.durationMs)} cost`,
+          fmt: (v) => "$" + v.toFixed(4),
+          type: "window",
+          durationMs: win.durationMs,
+          current: usage.cost,
+        });
+      }
+    }
+  }
+
+  for (const check of checks) {
+    const current = check.type === "window" ? check.current : sums[check.field];
+    if (current >= check.limit) {
       // Get the key name for a friendlier error message
       let keyName = apiKeyValue.slice(0, 8) + "...";
       try {
@@ -213,8 +281,8 @@ export async function checkLimit(apiKeyValue) {
 
       return {
         allowed: false,
-        reason: `API key "${keyName}" exceeded ${label} limit (${fmt(sums[field])} / ${fmt(limit)})`,
-        limitType: field,
+        reason: `API key "${keyName}" exceeded ${check.label} limit (${check.fmt(current)} / ${check.fmt(check.limit)})`,
+        limitType: check.field,
         usage: { ...sums },
       };
     }
@@ -243,7 +311,7 @@ export function recordUsage(apiKeyValue, inputTokens, cost) {
 
   // Increment in-memory totals (avoids recalc on every request)
   if (!totalsCache[apiKeyValue]) {
-    totalsCache[apiKeyValue] = { inputTokens5h: 0, inputTokens24h: 0, cost5h: 0, cost24h: 0 };
+    totalsCache[apiKeyValue] = { inputTokens5h: 0, inputTokens24h: 0, cost5h: 0, cost24h: 0, windows: [] };
   }
   const t = totalsCache[apiKeyValue];
   const tokens = inputTokens || 0;
@@ -252,6 +320,7 @@ export function recordUsage(apiKeyValue, inputTokens, cost) {
   t.inputTokens24h += tokens;
   t.cost5h += c;
   t.cost24h += c;
+  // Note: Custom windows are calculated on-demand in checkLimit to avoid complexity
 }
 
 /**
@@ -280,7 +349,53 @@ export async function getUsageSummary(apiKeyValue) {
   await refreshLimitsCache();
   const limits = limitsCache.data[apiKeyValue] || {};
 
-  return { usage, limits };
+  // Calculate custom window usage if defined
+  const windowUsage = {};
+  if (limits.windows && Array.isArray(limits.windows)) {
+    for (const win of limits.windows) {
+      if (!win.durationMs) continue;
+      const wu = getWindowUsage(apiKeyValue, win.durationMs);
+      windowUsage[`tokens_${win.durationMs}`] = wu.inputTokens;
+      windowUsage[`cost_${win.durationMs}`] = wu.cost;
+    }
+  }
+
+  return { usage, limits, windowUsage };
+}
+
+/**
+ * Format duration in milliseconds to human-readable label.
+ * @param {number} ms
+ * @returns {string}
+ */
+function formatDuration(ms) {
+  const minutes = Math.floor(ms / (60 * 1000));
+  const hours = Math.floor(ms / (60 * 60 * 1000));
+  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+  if (days > 0) return `${days}d`;
+  if (hours > 0) return `${hours}h`;
+  return `${minutes}m`;
+}
+
+/**
+ * Validate a custom window configuration.
+ * @param {object} win
+ * @returns {{valid: boolean, error?: string}}
+ */
+export function validateWindow(win) {
+  if (!win || typeof win !== "object") return { valid: false, error: "Window must be an object" };
+  if (!win.durationMs || typeof win.durationMs !== "number" || win.durationMs < 60 * 1000) {
+    return { valid: false, error: "durationMs must be at least 1 minute" };
+  }
+  if (win.durationMs > MAX_WINDOW_MS) {
+    return { valid: false, error: `durationMs cannot exceed ${MAX_WINDOW_MS}ms (30 days)` };
+  }
+  const hasTokenLimit = win.inputTokens && typeof win.inputTokens === "number" && win.inputTokens > 0;
+  const hasCostLimit = win.cost && typeof win.cost === "number" && win.cost > 0;
+  if (!hasTokenLimit && !hasCostLimit) {
+    return { valid: false, error: "Window must have either inputTokens or cost limit" };
+  }
+  return { valid: true };
 }
 
 // ─── Background Recalc & Prune ───────────────────────────────
@@ -290,9 +405,10 @@ function backgroundRecalcAndPrune() {
     const now = Date.now();
     const cutoff5h = now - WINDOW_5H_MS;
     const cutoff24h = now - WINDOW_24H_MS;
+    const cutoffMax = now - MAX_WINDOW_MS;
 
-    // Prune entries older than 24h
-    getStmts().prune.run(cutoff24h);
+    // Prune entries older than max window (30 days)
+    getStmts().prune.run(cutoffMax);
 
     // Recalc all active keys from SQLite
     const rows = getStmts().sumAllKeys.all(cutoff5h, cutoff5h, cutoff24h);
@@ -308,10 +424,18 @@ function backgroundRecalcAndPrune() {
     }
 
     // Sync cache — remove stale keys, add/update active ones
+    // Preserve custom windows array when updating
     for (const key of Object.keys(totalsCache)) {
       if (!newTotals[key]) delete totalsCache[key];
     }
-    Object.assign(totalsCache, newTotals);
+    for (const [key, totals] of Object.entries(newTotals)) {
+      if (totalsCache[key]) {
+        // Preserve existing windows array
+        totalsCache[key] = { ...totals, windows: totalsCache[key].windows || [] };
+      } else {
+        totalsCache[key] = { ...totals, windows: [] };
+      }
+    }
   } catch (err) {
     console.error("[usageLimiter] Background recalc failed:", err.message);
   }
