@@ -55,6 +55,14 @@ export const MODEL_PRICING = {
   "o1":                           { input: 15.00, output: 60.00, cached: 7.50,  reasoning: 90.00,  cache_creation: 15.00 },
   "o1-mini":                      { input: 3.00,  output: 12.00, cached: 1.50,  reasoning: 18.00,  cache_creation: 3.00  },
 
+  // === GPT-5.4 / GPT-5.5 Series (March 2026) ===
+  "gpt-5.5":                      { input: 5.00,  output: 30.00, cached: 2.50,  reasoning: 45.00,  cache_creation: 5.00  },
+  "gpt-5.5-pro":                  { input: 10.00, output: 60.00, cached: 5.00,  reasoning: 90.00,  cache_creation: 10.00 },
+  "gpt-5.4":                      { input: 2.50,  output: 15.00, cached: 1.25,  reasoning: 22.50,  cache_creation: 2.50  },
+  "gpt-5.4-pro":                  { input: 30.00, output: 180.00,cached: 15.00, reasoning: 270.00, cache_creation: 30.00 },
+  "gpt-5.4-mini":                 { input: 0.40,  output: 1.60,  cached: 0.20,  reasoning: 2.40,   cache_creation: 0.40  },
+  "gpt-5.4-nano":                 { input: 0.10,  output: 0.40,  cached: 0.05,  reasoning: 0.60,   cache_creation: 0.10  },
+
   // === Gemini ===
   "gemini-3-flash-preview":       { input: 0.50,  output: 3.00,  cached: 0.03,  reasoning: 4.50,   cache_creation: 0.50  },
   "gemini-3-pro-preview":         { input: 2.00,  output: 12.00, cached: 0.25,  reasoning: 18.00,  cache_creation: 2.00  },
