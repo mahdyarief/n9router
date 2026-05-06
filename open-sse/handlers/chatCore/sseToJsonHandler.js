@@ -127,6 +127,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
       saveRequestDetail(buildRequestDetail({
         ...ctx,
+        apiKey,
         latency: { ttft: totalLatency, total: totalLatency },
         tokens: {
           prompt_tokens: usage.input_tokens || 0,
@@ -207,6 +208,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
     const totalLatency = Date.now() - requestStartTime;
     saveRequestDetail(buildRequestDetail({
       ...ctx,
+      apiKey,
       latency: { ttft: totalLatency, total: totalLatency },
       tokens: usage,
       response: {

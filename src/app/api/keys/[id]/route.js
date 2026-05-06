@@ -21,7 +21,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, limits } = body;
+    const { isActive, limits, name } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -30,6 +30,11 @@ export async function PUT(request, { params }) {
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (name !== undefined) {
+      const trimmed = String(name).trim();
+      if (!trimmed) return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 });
+      updateData.name = trimmed;
+    }
 
     // Handle limits update
     if (limits !== undefined) {

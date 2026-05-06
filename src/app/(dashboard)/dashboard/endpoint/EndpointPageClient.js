@@ -81,6 +81,14 @@ export default function APIPageClient({ machineId }) {
     loadSettings();
   }, []);
 
+  useEffect(() => {
+    const keysWithLimits = keys.filter(
+      (k) => k.limits && Object.values(k.limits).some(Boolean)
+    );
+    keysWithLimits.forEach((k) => keyLimits.fetchKeyUsage(k.id));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keys]);
+
   const loadSettings = async () => {
     setTunnelChecking(true);
     try {
@@ -613,6 +621,22 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const handleRenameKey = async (id, name) => {
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setKeys((prev) => prev.map((k) => (k.id === id ? data.key : k)));
+      }
+    } catch (error) {
+      console.log("Error renaming key:", error);
+    }
+  };
+
   const handleToggleKey = async (id, isActive) => {
     try {
       const res = await fetch(`/api/keys/${id}`, {
@@ -964,6 +988,7 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 handleToggleKey={handleToggleKey}
                 handleDeleteKey={handleDeleteKey}
+                handleRenameKey={handleRenameKey}
                 {...keyLimits}
               />
             ))}

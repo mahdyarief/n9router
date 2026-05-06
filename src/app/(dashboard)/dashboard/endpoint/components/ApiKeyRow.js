@@ -1,7 +1,47 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import Toggle from "@/shared/components/Toggle";
 import KeyLimitsEditor from "./KeyLimitsEditor";
+
+function fmtN(n) {
+  if (n == null) return "—";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+  return String(Math.floor(n));
+}
+
+function CompactQuota({ limits, usageData }) {
+  if (!limits) return null;
+  const u = usageData?.usage || null;
+  const items = [
+    limits.inputTokens5h  && { label: "5h tok",  cur: u?.inputTokens5h,  max: limits.inputTokens5h },
+    limits.inputTokens24h && { label: "24h tok", cur: u?.inputTokens24h, max: limits.inputTokens24h },
+    limits.cost5h         && { label: "5h $",    cur: u?.cost5h,         max: limits.cost5h,  isCost: true },
+    limits.cost24h        && { label: "24h $",   cur: u?.cost24h,        max: limits.cost24h, isCost: true },
+  ].filter(Boolean);
+  if (items.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1 mt-1 flex-wrap">
+      {items.map(({ label, cur, max, isCost }) => {
+        const pct = cur != null ? Math.min(100, (cur / max) * 100) : null;
+        const cls = pct == null
+          ? "bg-black/5 dark:bg-white/5 text-text-muted"
+          : pct >= 100 ? "bg-red-500/15 text-red-500"
+          : pct >= 80  ? "bg-amber-500/15 text-amber-500"
+          : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+        const valStr = isCost
+          ? `$${cur != null ? cur.toFixed(2) : "—"}/$${max.toFixed(2)}`
+          : `${cur != null ? fmtN(cur) : "—"}/${fmtN(max)}`;
+        return (
+          <span key={label} className={`text-[10px] px-1.5 py-px rounded font-mono whitespace-nowrap ${cls}`}>
+            {label} {valStr}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 /** Mask an API key, showing only the last 4 chars. */
 function maskKey(k) {
@@ -36,6 +76,7 @@ export default function ApiKeyRow({
   copy,
   handleToggleKey,
   handleDeleteKey,
+  handleRenameKey,
   editingLimits,
   keyUsage,
   limitDraft,
@@ -48,6 +89,27 @@ export default function ApiKeyRow({
   const isVisible = visibleKeys.has(key.id);
   const inactive  = key.isActive === false;
 
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft]     = useState("");
+  const nameInputRef = useRef(null);
+
+  useEffect(() => {
+    if (editingName && nameInputRef.current) nameInputRef.current.select();
+  }, [editingName]);
+
+  const startEditName = () => {
+    setNameDraft(key.name);
+    setEditingName(true);
+  };
+
+  const commitName = () => {
+    const trimmed = nameDraft.trim();
+    if (trimmed && trimmed !== key.name) handleRenameKey(key.id, trimmed);
+    setEditingName(false);
+  };
+
+  const cancelName = () => setEditingName(false);
+
   return (
     <div className="flex flex-col border-b border-black/5 dark:border-white/5 last:border-b-0">
       {/* Key row */}
@@ -55,7 +117,37 @@ export default function ApiKeyRow({
 
         {/* Left: key info */}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium">{key.name}</p>
+          {editingName ? (
+            <div className="flex items-center gap-1">
+              <input
+                ref={nameInputRef}
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitName();
+                  if (e.key === "Escape") cancelName();
+                }}
+                className="text-sm font-medium bg-transparent border-b border-primary outline-none w-40 py-0"
+              />
+              <button onClick={commitName} className="p-1 text-primary hover:bg-primary/10 rounded" title="Save">
+                <span className="material-symbols-outlined text-[14px]">check</span>
+              </button>
+              <button onClick={cancelName} className="p-1 text-text-muted hover:bg-black/5 dark:hover:bg-white/5 rounded" title="Cancel">
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              <p className="text-sm font-medium">{key.name}</p>
+              <button
+                onClick={startEditName}
+                className="p-1 text-text-muted hover:text-primary opacity-0 group-hover:opacity-100 transition-all rounded hover:bg-black/5 dark:hover:bg-white/5"
+                title="Rename key"
+              >
+                <span className="material-symbols-outlined text-[13px]">edit</span>
+              </button>
+            </div>
+          )}
           <div className="flex items-center gap-2 mt-1">
             <code className="text-xs text-text-muted font-mono">
               {isVisible ? key.key : maskKey(key.key)}
@@ -82,6 +174,7 @@ export default function ApiKeyRow({
             Created {new Date(key.createdAt).toLocaleDateString()}
           </p>
           {inactive && <p className="text-xs text-orange-500 mt-1">Paused</p>}
+          <CompactQuota limits={key.limits} usageData={keyUsage[key.id]} />
         </div>
 
         {/* Right: actions */}

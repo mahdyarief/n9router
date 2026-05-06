@@ -77,5 +77,6 @@ export function useKeyLimits(setKeys) {
     savingLimits,
     handleOpenLimits,
     handleSaveLimits,
+    fetchKeyUsage,
   };
 }

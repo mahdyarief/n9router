@@ -152,6 +152,7 @@ async function flushToDatabase() {
         status: item.status || null,
         latency: item.latency || {},
         tokens: item.tokens || {},
+        apiKey: item.apiKey || null,
         request: item.request || {},
         providerRequest: item.providerRequest || {},
         providerResponse: item.providerResponse || {},
