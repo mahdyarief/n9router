@@ -179,9 +179,11 @@ rm -rf .next/standalone/.vscode
 # ── Cross-platform hardening (native modules) ─────────────────────────────────
 info "Pruning host-native artifacts from standalone..."
 
-# 1) Remove host-built better-sqlite3 binary and let postinstall rebuild it
-# on the target machine.
-rm -f .next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+# 1) Remove entire better-sqlite3 module so postinstall does a clean install
+# with prebuild-install (downloads the correct prebuilt binary for the target
+# platform). Only stripping the .node file leaves a broken stub that npm
+# considers already-installed and skips reinstalling.
+rm -rf .next/standalone/node_modules/better-sqlite3
 
 # 2) Remove platform-specific sharp binary packs copied from the build host.
 # images.unoptimized=true, so these are not required at runtime.

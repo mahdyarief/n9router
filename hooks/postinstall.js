@@ -79,6 +79,20 @@ function rebuildModule(moduleName, cwd) {
   });
 }
 
+function installModule(moduleName, cwd) {
+  // When running inside `npm install -g`, npm sets npm_config_global=true and
+  // npm_config_prefix to the global prefix. Clear these so the inner npm install
+  // installs locally into cwd/node_modules instead of global node_modules.
+  const env = { ...process.env };
+  delete env.npm_config_global;
+  delete env.npm_config_prefix;
+  execSync(`${npmCmd} install ${moduleName} --prefix "${cwd}"`, {
+    env,
+    stdio: "inherit",
+    timeout: 180000,
+  });
+}
+
 function tryPrebuildInstall(moduleRoot) {
   try {
     info("Attempting to download prebuilt better-sqlite3 binary...");
@@ -95,8 +109,26 @@ function tryPrebuildInstall(moduleRoot) {
 
 function ensureBetterSqlite3(locationName, moduleRoot) {
   if (!pathExists(moduleRoot)) {
-    info(`Skipping ${locationName}: better-sqlite3 not present`);
-    return;
+    const installCwd = path.dirname(path.dirname(moduleRoot));
+    const packageJsonPath = path.join(installCwd, "package.json");
+
+    if (!pathExists(packageJsonPath)) {
+      info(`Skipping ${locationName}: package.json not present`);
+      return;
+    }
+
+    info(`Installing better-sqlite3 in ${locationName}`);
+    try {
+      installModule("better-sqlite3", installCwd);
+    } catch (error) {
+      warn(`Install failed in ${locationName}: ${error.message}`);
+      return;
+    }
+
+    if (!pathExists(moduleRoot)) {
+      warn(`better-sqlite3 still missing in ${locationName} after install`);
+      return;
+    }
   }
 
   const binaryPath = path.join(moduleRoot, "build", "Release", "better_sqlite3.node");
@@ -201,12 +233,14 @@ function copyOpenSse() {
 
 function main() {
   const standaloneRoot = resolveStandaloneRoot();
-  const targets = [
-    {
-      name: "root node_modules",
-      moduleRoot: path.join(pkgRoot, "node_modules", "better-sqlite3"),
-    },
-  ];
+  const targets = [];
+
+  // Only include root node_modules if it already exists (dev install).
+  // Published packages don't ship with root node_modules/better-sqlite3.
+  const rootModuleRoot = path.join(pkgRoot, "node_modules", "better-sqlite3");
+  if (pathExists(rootModuleRoot)) {
+    targets.push({ name: "root node_modules", moduleRoot: rootModuleRoot });
+  }
 
   if (standaloneRoot) {
     targets.push({
