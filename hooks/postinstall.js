@@ -79,6 +79,20 @@ function rebuildModule(moduleName, cwd) {
   });
 }
 
+function tryPrebuildInstall(moduleRoot) {
+  try {
+    info("Attempting to download prebuilt better-sqlite3 binary...");
+    execSync("npx prebuild-install --runtime electron --target 22.0.0 || npx prebuild-install", {
+      cwd: moduleRoot,
+      stdio: "pipe",
+      timeout: 60000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function ensureBetterSqlite3(locationName, moduleRoot) {
   if (!pathExists(moduleRoot)) {
     info(`Skipping ${locationName}: better-sqlite3 not present`);
@@ -108,9 +122,20 @@ function ensureBetterSqlite3(locationName, moduleRoot) {
     }
   }
 
-  // 2. Fall back to rebuild, but only if we have the source files
+  // 2. Try to download prebuilt binaries using prebuild-install
+  const prebuiltPath = path.join(moduleRoot, "build", "Release", "better_sqlite3.node");
+  if (tryPrebuildInstall(moduleRoot) && isBinaryValidForPlatform(prebuiltPath)) {
+    info(`Downloaded prebuilt better-sqlite3 for ${locationName}`);
+    return;
+  }
+
+  // 3. Fall back to rebuild from source, but only if we have the source files
   if (!pathExists(path.join(moduleRoot, "binding.gyp"))) {
-    info(`Skipping ${locationName} rebuild: binding.gyp not found (cannot rebuild from source)`);
+    warn(`Cannot rebuild better-sqlite3 in ${locationName}: binding.gyp not found`);
+    warn("API key usage limiting will be disabled. To fix, install build tools:");
+    warn("  macOS: xcode-select --install");
+    warn("  Linux: sudo apt-get install build-essential python3");
+    warn("  Windows: npm install --global windows-build-tools");
     return;
   }
 
@@ -118,7 +143,8 @@ function ensureBetterSqlite3(locationName, moduleRoot) {
     rebuildModule("better-sqlite3", path.dirname(path.dirname(moduleRoot)));
   } catch (error) {
     warn(`Rebuild failed in ${locationName}: ${error.message}`);
-    warn("Install will continue. Cursor token auto-import may use fallback mode.");
+    warn("API key usage limiting will be disabled.");
+    warn("The app will still work - install just won't track per-key usage limits.");
     return;
   }
 
@@ -126,6 +152,7 @@ function ensureBetterSqlite3(locationName, moduleRoot) {
     info(`better-sqlite3 rebuild succeeded in ${locationName}`);
   } else {
     warn(`better-sqlite3 still not valid in ${locationName} after rebuild`);
+    warn("API key usage limiting will be disabled.");
   }
 }
 
@@ -188,8 +215,21 @@ function main() {
     });
   }
 
+  let anySuccess = false;
   for (const target of targets) {
+    const binaryPath = path.join(target.moduleRoot, "build", "Release", "better_sqlite3.node");
     ensureBetterSqlite3(target.name, target.moduleRoot);
+    if (isBinaryValidForPlatform(binaryPath)) {
+      anySuccess = true;
+    }
+  }
+
+  // Summary message
+  if (anySuccess) {
+    info("better-sqlite3 is ready. API key usage limiting enabled.");
+  } else if (targets.some(t => pathExists(t.moduleRoot))) {
+    warn("better-sqlite3 could not be built. API key usage limiting disabled.");
+    warn("To enable usage limits, reinstall with build tools installed.");
   }
 
   copyOpenSse();
