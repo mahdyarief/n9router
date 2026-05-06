@@ -76,6 +76,17 @@ function getDb() {
         ts INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage_entries(api_key, ts);
+
+      CREATE TABLE IF NOT EXISTS reset_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        api_key TEXT NOT NULL,
+        window_ms INTEGER,
+        window_label TEXT NOT NULL,
+        reset_at INTEGER NOT NULL,
+        tokens_cleared INTEGER NOT NULL DEFAULT 0,
+        cost_cleared REAL NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_reset_history_key ON reset_history(api_key, reset_at);
     `);
 
     global._usageLimiterDb = db;
@@ -87,9 +98,29 @@ function getDb() {
 }
 
 function getStmts() {
+  // Re-initialize if cached stmts are missing newer statements (e.g. after hot reload)
+  if (global._usageLimiterStmts && !global._usageLimiterStmts.insertReset) {
+    global._usageLimiterStmts = null;
+  }
   if (global._usageLimiterStmts) return global._usageLimiterStmts;
   const db = getDb();
   if (!db) return null;
+
+  // Ensure reset_history table exists (migration for DBs opened before this schema change)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS reset_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        api_key TEXT NOT NULL,
+        window_ms INTEGER,
+        window_label TEXT NOT NULL,
+        reset_at INTEGER NOT NULL,
+        tokens_cleared INTEGER NOT NULL DEFAULT 0,
+        cost_cleared REAL NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_reset_history_key ON reset_history(api_key, reset_at);
+    `);
+  } catch { /* table already exists */ }
 
   global._usageLimiterStmts = {
     insert: db.prepare(
@@ -125,6 +156,24 @@ function getStmts() {
       WHERE api_key = ? AND ts >= ?
     `),
     prune: db.prepare("DELETE FROM usage_entries WHERE ts < ?"),
+    insertReset: db.prepare(
+      "INSERT INTO reset_history (api_key, window_ms, window_label, reset_at, tokens_cleared, cost_cleared) VALUES (?, ?, ?, ?, ?, ?)"
+    ),
+    getResetHistory: db.prepare(
+      "SELECT id, window_ms, window_label, reset_at, tokens_cleared, cost_cleared FROM reset_history WHERE api_key = ? ORDER BY reset_at DESC LIMIT 30"
+    ),
+    sumForWindow: db.prepare(
+      "SELECT SUM(input_tokens) AS tokens, SUM(cost) AS cost FROM usage_entries WHERE api_key = ? AND ts >= ?"
+    ),
+    sumAllForKey: db.prepare(
+      "SELECT SUM(input_tokens) AS tokens, SUM(cost) AS cost FROM usage_entries WHERE api_key = ?"
+    ),
+    deleteByWindow: db.prepare(
+      "DELETE FROM usage_entries WHERE api_key = ? AND ts >= ?"
+    ),
+    deleteAllForKey: db.prepare(
+      "DELETE FROM usage_entries WHERE api_key = ?"
+    ),
   };
 
   return global._usageLimiterStmts;
@@ -417,6 +466,72 @@ function formatDuration(ms) {
   if (days > 0) return `${days}d`;
   if (hours > 0) return `${hours}h`;
   return `${minutes}m`;
+}
+
+/**
+ * Reset usage for an API key within a given time window.
+ * Deletes usage_entries in the window, logs to reset_history, invalidates cache.
+ * @param {string} apiKeyValue
+ * @param {number|null} windowMs  - ms duration to clear (null = all time)
+ * @param {string} windowLabel    - human-readable label for history
+ * @returns {{tokensCleared: number, costCleared: number}}
+ */
+export function resetKeyUsage(apiKeyValue, windowMs, windowLabel) {
+  if (!sqliteAvailable) return { tokensCleared: 0, costCleared: 0 };
+  const stmts = getStmts();
+  if (!stmts) return { tokensCleared: 0, costCleared: 0 };
+
+  const now = Date.now();
+  let tokensCleared = 0;
+  let costCleared = 0;
+
+  try {
+    if (windowMs) {
+      const cutoff = now - windowMs;
+      const row = stmts.sumForWindow.get(apiKeyValue, cutoff);
+      tokensCleared = row?.tokens || 0;
+      costCleared = row?.cost || 0;
+      stmts.deleteByWindow.run(apiKeyValue, cutoff);
+    } else {
+      const row = stmts.sumAllForKey.get(apiKeyValue);
+      tokensCleared = row?.tokens || 0;
+      costCleared = row?.cost || 0;
+      stmts.deleteAllForKey.run(apiKeyValue);
+    }
+
+    stmts.insertReset.run(
+      apiKeyValue,
+      windowMs || null,
+      windowLabel || "All time",
+      now,
+      Math.round(tokensCleared),
+      costCleared
+    );
+
+    // Invalidate in-memory totals cache so next request recalculates
+    delete totalsCache[apiKeyValue];
+  } catch (err) {
+    console.error("[usageLimiter] resetKeyUsage failed:", err.message);
+  }
+
+  return { tokensCleared: Math.round(tokensCleared), costCleared };
+}
+
+/**
+ * Get reset history for an API key.
+ * @param {string} apiKeyValue
+ * @returns {Array<{id, window_ms, window_label, reset_at, tokens_cleared, cost_cleared}>}
+ */
+export function getResetHistory(apiKeyValue) {
+  if (!sqliteAvailable) return [];
+  const stmts = getStmts();
+  if (!stmts) return [];
+  try {
+    return stmts.getResetHistory.all(apiKeyValue);
+  } catch (err) {
+    console.error("[usageLimiter] getResetHistory failed:", err.message);
+    return [];
+  }
 }
 
 /**

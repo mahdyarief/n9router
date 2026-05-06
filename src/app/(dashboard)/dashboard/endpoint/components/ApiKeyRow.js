@@ -115,6 +115,9 @@ export default function ApiKeyRow({
   handleOpenLimits,
   handleSaveLimits,
   setEditingLimits,
+  resetHistory,
+  resettingUsage,
+  handleResetUsage,
 }) {
   const isVisible = visibleKeys.has(key.id);
   const inactive  = key.isActive === false;
@@ -253,6 +256,9 @@ export default function ApiKeyRow({
           saving={savingLimits}
           onSave={() => handleSaveLimits(key.id)}
           onCancel={() => setEditingLimits(null)}
+          onResetUsage={(windowMs, windowLabel) => handleResetUsage(key.id, windowMs, windowLabel)}
+          resetHistory={resetHistory?.[key.id]}
+          resettingUsage={resettingUsage}
         />
       )}
     </div>

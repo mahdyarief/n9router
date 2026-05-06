@@ -12,6 +12,8 @@ export function useKeyLimits(setKeys) {
   const [limitDraft, setLimitDraft] = useState({});
   const [keyUsage, setKeyUsage] = useState({});
   const [savingLimits, setSavingLimits] = useState(false);
+  const [resetHistory, setResetHistory] = useState({});
+  const [resettingUsage, setResettingUsage] = useState(false);
 
   const fetchKeyUsage = async (keyId) => {
     try {
@@ -38,6 +40,7 @@ export function useKeyLimits(setKeys) {
     });
     setEditingLimits(key.id);
     fetchKeyUsage(key.id);
+    fetchResetHistory(key.id);
   };
 
   const handleSaveLimits = async (keyId) => {
@@ -82,6 +85,32 @@ export function useKeyLimits(setKeys) {
     setSavingLimits(false);
   };
 
+  const fetchResetHistory = async (keyId) => {
+    try {
+      const res = await fetch(`/api/keys/${keyId}/reset-usage`);
+      if (res.ok) {
+        const data = await res.json();
+        setResetHistory((prev) => ({ ...prev, [keyId]: data.history || [] }));
+      }
+    } catch {}
+  };
+
+  const handleResetUsage = async (keyId, windowMs, windowLabel) => {
+    setResettingUsage(true);
+    try {
+      const res = await fetch(`/api/keys/${keyId}/reset-usage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ windowMs, windowLabel }),
+      });
+      if (res.ok) {
+        await fetchKeyUsage(keyId);
+        await fetchResetHistory(keyId);
+      }
+    } catch {}
+    setResettingUsage(false);
+  };
+
   return {
     editingLimits,
     setEditingLimits,
@@ -92,5 +121,9 @@ export function useKeyLimits(setKeys) {
     handleOpenLimits,
     handleSaveLimits,
     fetchKeyUsage,
+    resetHistory,
+    resettingUsage,
+    fetchResetHistory,
+    handleResetUsage,
   };
 }
