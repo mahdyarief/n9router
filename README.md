@@ -1213,22 +1213,46 @@ docker run -d \
   nightwalker8x/n9router:latest
 ```
 
-Build locally from source:
+Build locally from source for the current machine:
 
 ```bash
 docker build -t n9router .
 ```
 
-Build and push a multi-arch Docker Hub release:
+Platform-specific local builds:
 
 ```bash
-# One-time: create/select a buildx builder if Docker Desktop did not create one
+# macOS with Apple Silicon Docker Desktop, or ARM Linux hosts
+docker buildx build --platform linux/arm64 --load -t n9router:local .
+
+# Linux VPS / Intel or AMD hosts
+docker buildx build --platform linux/amd64 --load -t n9router:local .
+```
+
+> Docker Desktop on macOS runs Linux containers. There is no separate native `darwin/*` Docker image; use `linux/arm64` on Apple Silicon and `linux/amd64` on Intel Macs or Linux x86_64 hosts.
+
+Build and push the current package version plus `latest`:
+
+```bash
+# One-time: create/select a buildx builder if Docker Desktop did not create one.
 docker buildx create --name n9router-builder --use || docker buildx use n9router-builder
 
-# Build for Ubuntu VPS/Linux amd64 and Apple Silicon/ARM Linux, then push
+# Builds linux/amd64 + linux/arm64, checks whether the version tag exists remotely,
+# then pushes nightwalker8x/n9router:<package.json version> and :latest.
+npm run publish:docker
+
+# Rebuild and overwrite the remote version tag when needed.
+npm run publish:docker:force
+```
+
+Manual equivalent:
+
+```bash
+VERSION=$(node -p "require('./package.json').version")
+
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t nightwalker8x/n9router:v0.4.26 \
+  -t "nightwalker8x/n9router:${VERSION}" \
   -t nightwalker8x/n9router:latest \
   --push \
   --provenance=false \
@@ -1236,7 +1260,7 @@ docker buildx build \
   .
 
 # Verify the pushed manifest
-docker buildx imagetools inspect nightwalker8x/n9router:v0.4.26
+docker buildx imagetools inspect "nightwalker8x/n9router:${VERSION}"
 ```
 
 Build a local image for the current machine only:

@@ -43,7 +43,9 @@
     "publish:npm:local": "./scripts/publish-npm.sh --local",
     "publish:npm": "./scripts/publish-npm.sh",
     "publish:npm:dry": "./scripts/publish-npm.sh --dry-run",
-    "publish:npm:next": "./scripts/publish-npm.sh --tag next"
+    "publish:npm:next": "./scripts/publish-npm.sh --tag next",
+    "publish:docker": "./scripts/publish-docker.sh",
+    "publish:docker:force": "./scripts/publish-docker.sh --force"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
