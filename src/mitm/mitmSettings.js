@@ -85,6 +85,12 @@ function getAntigravityHostRewriteTarget(host, dbFile = DEFAULT_DB_FILE) {
   return host;
 }
 
+function getTokenSwapProjectRewriteEnabled(dbFile = DEFAULT_DB_FILE) {
+  const settings = getMitmSettings(dbFile);
+  // Default ON — this fixes the 403 vs 429 issue in Mode B
+  return settings.tokenSwapProjectRewrite !== false;
+}
+
 function resetMitmSettingsCache(dbFile = null) {
   if (dbFile) {
     settingsCache.delete(dbFile);
@@ -99,6 +105,7 @@ module.exports = {
   getAntigravityHostRewriteTarget,
   getAntigravityIdeVersionSettings,
   getMitmSettings,
+  getTokenSwapProjectRewriteEnabled,
   normalizeAntigravityIdeVersion,
   resetMitmSettingsCache,
 };

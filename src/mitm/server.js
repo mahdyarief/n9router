@@ -27,7 +27,7 @@ const { pushHealthEvent, getLastEventStatus, migrateToEmailKeys } = require("./h
 
 const { applyRtkCompression } = require("./rtkCompressor");
 const { applyAntigravityIdeVersionOverride } = require("./antigravityIdeVersion");
-const { getAntigravityHostRewriteTarget } = require("./mitmSettings");
+const { getAntigravityHostRewriteTarget, getTokenSwapProjectRewriteEnabled } = require("./mitmSettings");
 
 const DB_FILE = path.join(DATA_DIR, "db.json");
 const LOCAL_PORT = 443;
@@ -245,14 +245,37 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
         },
       });
 
+      // ── Project ID rewrite (fixes 403 when token is swapped to a different account) ──
+      // The IDE's request body contains a `project` field tied to the original user's
+      // Antigravity project. When we swap the auth token to a pool account, the upstream
+      // validates that the project matches the token — mismatches return 403 PERMISSION_DENIED.
+      // We rewrite `project` to the pool connection's stored projectId when the setting is on.
+      let bodyForRequest = effectiveBody;
+      if (
+        provider === "antigravity" &&
+        conn.projectId &&
+        getTokenSwapProjectRewriteEnabled(DB_FILE)
+      ) {
+        try {
+          const parsed = JSON.parse(effectiveBody.toString());
+          if (parsed.project !== undefined && parsed.project !== conn.projectId) {
+            parsed.project = conn.projectId;
+            bodyForRequest = Buffer.from(JSON.stringify(parsed));
+            log(`🏗️ [token-swap] project rewrite → "${conn.projectId}" for "${label}"`);
+          }
+        } catch {
+          // Non-JSON body or no project field — skip rewrite silently
+        }
+      }
+
       const swappedHeaders = {
         ...headersForForwarding,
         host: targetHost,
         authorization: `Bearer ${conn.accessToken}`
       };
-      // Update Content-Length if the MITM changed the request body.
-      if (effectiveBody !== bodyBuffer) {
-        swappedHeaders['content-length'] = String(effectiveBody.length);
+      // Update Content-Length if the body changed (RTK compression or project rewrite).
+      if (bodyForRequest !== bodyBuffer) {
+        swappedHeaders['content-length'] = String(bodyForRequest.length);
       }
 
       try {
@@ -283,7 +306,7 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
             }
           });
           forwardReq.on("error", reject);
-          if (effectiveBody.length > 0) forwardReq.write(effectiveBody);
+          if (bodyForRequest.length > 0) forwardReq.write(bodyForRequest);
           forwardReq.end();
         });
 

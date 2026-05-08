@@ -95,6 +95,8 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
   const [togglingStrategy, setTogglingStrategy] = useState(false);
   const [maskEmails, setMaskEmails] = useState(false);
   const [togglingMaskEmails, setTogglingMaskEmails] = useState(false);
+  const [projectRewrite, setProjectRewrite] = useState(true);
+  const [togglingProjectRewrite, setTogglingProjectRewrite] = useState(false);
   const [retryCount503, setRetryCount503] = useState(DEFAULT_503_RETRY_COUNT); // global 503 retry count
   const [accountRetryOverrides, setAccountRetryOverrides] = useState({}); // local optimistic state for per-account 503 retry inputs
   const [togglingAccountId, setTogglingAccountId] = useState(null);
@@ -114,6 +116,7 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
         setEnabled(!!data.tokenSwapEnabled);
         setStrategy(data.tokenSwapStrategy || "round-robin");
         setMaskEmails(!!data.tokenSwapMaskEmails);
+        setProjectRewrite(data.tokenSwapProjectRewrite !== false);
         setRetryCount503(data.antigravity503RetryCount ?? DEFAULT_503_RETRY_COUNT);
       }
     } catch { /* ignore */ }
@@ -259,6 +262,21 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
       if (res.ok) setMaskEmails(newVal);
     } catch { /* ignore */ }
     setTogglingMaskEmails(false);
+  };
+
+  const toggleProjectRewrite = async () => {
+    if (togglingProjectRewrite) return;
+    setTogglingProjectRewrite(true);
+    const newVal = !projectRewrite;
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tokenSwapProjectRewrite: newVal }),
+      });
+      if (res.ok) setProjectRewrite(newVal);
+    } catch { /* ignore */ }
+    setTogglingProjectRewrite(false);
   };
 
   const providerAccounts = connections.filter(
@@ -697,6 +715,24 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
                 <span className={`text-[11px] font-medium truncate ${maskEmails ? "text-violet-300" : "text-text-muted"}`}>Mask emails</span>
                 <span className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0 ml-auto ${maskEmails ? "bg-violet-500" : "bg-surface-alt border border-border"}`}>
                   <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform shadow-sm ${maskEmails ? "translate-x-3.5" : "translate-x-0.5"}`} />
+                </span>
+              </button>
+
+              <div className="w-px h-5 bg-border shrink-0" />
+
+              {/* Project ID rewrite */}
+              <button
+                onClick={toggleProjectRewrite}
+                disabled={togglingProjectRewrite}
+                title={projectRewrite
+                  ? "Project ID rewrite ON — replaces the IDE's project field in the request body with the pool account's own project ID, preventing 403 PERMISSION_DENIED errors when tokens are swapped"
+                  : "Project ID rewrite OFF — the original project ID from the IDE's request body is forwarded as-is (may cause 403 errors)"}
+                className={`flex items-center gap-1.5 flex-1 min-w-0 px-1.5 py-1 rounded-md transition-colors text-left ${togglingProjectRewrite ? "opacity-50" : "hover:bg-surface-alt cursor-pointer"}`}
+              >
+                <span className={`material-symbols-outlined text-[13px] shrink-0 ${projectRewrite ? "text-violet-400" : "text-text-muted"}`}>folder_managed</span>
+                <span className={`text-[11px] font-medium truncate ${projectRewrite ? "text-violet-300" : "text-text-muted"}`}>Rewrite project</span>
+                <span className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0 ml-auto ${projectRewrite ? "bg-violet-500" : "bg-surface-alt border border-border"}`}>
+                  <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform shadow-sm ${projectRewrite ? "translate-x-3.5" : "translate-x-0.5"}`} />
                 </span>
               </button>
 
