@@ -63,21 +63,54 @@ async function pipeSSE(routerRes, res, debugContext = null) {
   const reader = routerRes.body.getReader();
   const decoder = new TextDecoder();
   const chunks = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      res.end();
-      debugContext?.logResponse({
-        statusCode: routerRes.status,
-        headers: routerRes.headers,
-        bodyBuffer: Buffer.concat(chunks),
-        streamed: ct.includes("text/event-stream"),
-        note: "9Router mapped response",
-      });
-      break;
+  let streamError = null;
+  let clientClosed = false;
+  const onClientClose = () => {
+    clientClosed = true;
+    reader.cancel().catch(() => {});
+  };
+  res.once?.("close", onClientClose);
+
+  try {
+    while (true) {
+      let read;
+      try {
+        read = await reader.read();
+      } catch (error) {
+        streamError = error;
+        break;
+      }
+
+      const { done, value } = read;
+      if (done) break;
+      if (clientClosed || res.destroyed || res.writableEnded) break;
+
+      chunks.push(Buffer.from(value));
+      res.write(decoder.decode(value, { stream: true }));
     }
-    chunks.push(Buffer.from(value));
-    res.write(decoder.decode(value, { stream: true }));
+  } finally {
+    res.removeListener?.("close", onClientClose);
+    try { reader.releaseLock?.(); } catch {}
+  }
+
+  if (streamError) {
+    err(`Router response stream error: ${streamError.message}`);
+    debugContext?.logError("router.stream_error", streamError, {
+      statusCode: routerRes.status,
+      contentType: ct,
+      partialBytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+    });
+  }
+
+  if (!res.writableEnded && !res.destroyed) res.end();
+  if (!streamError) {
+    debugContext?.logResponse({
+      statusCode: routerRes.status,
+      headers: routerRes.headers,
+      bodyBuffer: Buffer.concat(chunks),
+      streamed: ct.includes("text/event-stream"),
+      note: "9Router mapped response",
+    });
   }
 }
 

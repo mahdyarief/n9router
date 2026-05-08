@@ -290,7 +290,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                   <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                   {apiKeys.length > 0 ? (
                     <select value={selectedApiKey} onChange={(e) => setSelectedApiKey(e.target.value)} className="min-w-0 px-2 py-2 bg-surface rounded text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5">
-                      {apiKeys.map((key) => <option key={key.id} value={key.key}>{key.key}</option>)}
+                      {apiKeys.map((key) => <option key={key.id} value={key.key}>{key.key} ({key.name})</option>)}
                     </select>
                   ) : (
                     <span className="min-w-0 rounded bg-surface/40 px-2 py-2 text-xs text-text-muted sm:py-1.5">

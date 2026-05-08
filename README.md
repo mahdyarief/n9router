@@ -1161,9 +1161,14 @@ pm2 startup
 Public Docker Hub image:
 
 - [`nightwalker8x/n9router:latest`](https://hub.docker.com/r/nightwalker8x/n9router)
-- [`nightwalker8x/n9router:v0.4.25`](https://hub.docker.com/r/nightwalker8x/n9router/tags)
+- [`nightwalker8x/n9router:v0.4.26`](https://hub.docker.com/r/nightwalker8x/n9router/tags)
 
-> Current public image is published for `linux/arm64`. For `linux/amd64`, build locally from this repository or publish a multi-arch image.
+The public image is published as a multi-arch Linux image:
+
+- `linux/amd64` — typical Ubuntu/Debian VPS, Intel/AMD servers, x86_64 desktops
+- `linux/arm64` — Apple Silicon Docker Desktop, ARM Linux servers, Raspberry Pi-class hosts
+
+Windows users should run the normal Linux container through Docker Desktop or WSL2. A native Windows container image is not currently published.
 
 ```bash
 docker pull nightwalker8x/n9router:latest
@@ -1194,7 +1199,7 @@ docker run -d \
   -e INITIAL_PASSWORD="change-this-password" \
   -e NEXT_PUBLIC_BASE_URL="http://localhost:20128" \
   -v "$PWD/data/n9router:/app/data" \
-  nightwalker8x/n9router:v0.4.25
+  nightwalker8x/n9router:v0.4.26
 ```
 
 Run with an env file:
@@ -1212,6 +1217,32 @@ Build locally from source:
 
 ```bash
 docker build -t n9router .
+```
+
+Build and push a multi-arch Docker Hub release:
+
+```bash
+# One-time: create/select a buildx builder if Docker Desktop did not create one
+docker buildx create --name n9router-builder --use || docker buildx use n9router-builder
+
+# Build for Ubuntu VPS/Linux amd64 and Apple Silicon/ARM Linux, then push
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t nightwalker8x/n9router:v0.4.26 \
+  -t nightwalker8x/n9router:latest \
+  --push \
+  --provenance=false \
+  --sbom=false \
+  .
+
+# Verify the pushed manifest
+docker buildx imagetools inspect nightwalker8x/n9router:v0.4.26
+```
+
+Build a local image for the current machine only:
+
+```bash
+docker buildx build --load -t n9router:local .
 ```
 
 Container defaults:

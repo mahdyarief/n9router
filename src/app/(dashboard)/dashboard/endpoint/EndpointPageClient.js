@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { useKeyLimits } from "./hooks/useKeyLimits";
+import ApiKeyRow from "./components/ApiKeyRow";
 
 const TUNNEL_BENEFITS = [
   { icon: "public", title: "Access Anywhere", desc: "Use your API from any network" },
@@ -64,6 +66,9 @@ export default function APIPageClient({ machineId }) {
   // API key visibility toggle state
   const [visibleKeys, setVisibleKeys] = useState(new Set());
 
+  // Per-key usage limits — all state + handlers live in this hook
+  const keyLimits = useKeyLimits(setKeys);
+
   const { copied, copy } = useCopyToClipboard();
 
   // Auto-scroll install log
@@ -75,6 +80,14 @@ export default function APIPageClient({ machineId }) {
     fetchData();
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    const keysWithLimits = keys.filter(
+      (k) => k.limits && Object.values(k.limits).some(Boolean)
+    );
+    keysWithLimits.forEach((k) => keyLimits.fetchKeyUsage(k.id));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keys]);
 
   const loadSettings = async () => {
     setTunnelChecking(true);
@@ -608,6 +621,22 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const handleRenameKey = async (id, name) => {
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setKeys((prev) => prev.map((k) => (k.id === id ? data.key : k)));
+      }
+    } catch (error) {
+      console.log("Error renaming key:", error);
+    }
+  };
+
   const handleToggleKey = async (id, isActive) => {
     try {
       const res = await fetch(`/api/keys/${id}`, {
@@ -950,64 +979,18 @@ export default function APIPageClient({ machineId }) {
         ) : (
           <div className="flex flex-col">
             {keys.map((key) => (
-              <div
+              <ApiKeyRow
                 key={key.id}
-                className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{key.name}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="text-xs text-text-muted font-mono">
-                      {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
-                    </code>
-                    <button
-                      onClick={() => toggleKeyVisibility(key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-0 group-hover:opacity-100 transition-all"
-                      title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => copy(key.key, key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-0 group-hover:opacity-100 transition-all"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {copied === key.id ? "check" : "content_copy"}
-                      </span>
-                    </button>
-                  </div>
-                  <p className="text-xs text-text-muted mt-1">
-                    Created {new Date(key.createdAt).toLocaleDateString()}
-                  </p>
-                  {key.isActive === false && (
-                    <p className="text-xs text-orange-500 mt-1">Paused</p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Toggle
-                    size="sm"
-                    checked={key.isActive ?? true}
-                    onChange={(checked) => {
-                      if (key.isActive && !checked) {
-                        if (confirm(`Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`)) {
-                          handleToggleKey(key.id, checked);
-                        }
-                      } else {
-                        handleToggleKey(key.id, checked);
-                      }
-                    }}
-                    title={key.isActive ? "Pause key" : "Resume key"}
-                  />
-                  <button
-                    onClick={() => handleDeleteKey(key.id)}
-                    className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
-                </div>
-              </div>
+                apiKey={key}
+                visibleKeys={visibleKeys}
+                toggleKeyVisibility={toggleKeyVisibility}
+                copied={copied}
+                copy={copy}
+                handleToggleKey={handleToggleKey}
+                handleDeleteKey={handleDeleteKey}
+                handleRenameKey={handleRenameKey}
+                {...keyLimits}
+              />
             ))}
           </div>
         )}

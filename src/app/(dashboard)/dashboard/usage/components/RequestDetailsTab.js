@@ -5,6 +5,7 @@ import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
+import ApiKeyBadge from "@/shared/components/ApiKeyBadge";
 import { cn } from "@/shared/utils/cn";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 
@@ -258,6 +259,7 @@ export default function RequestDetailsTab() {
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Timestamp</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Model</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Provider</th>
+                <th className="text-center p-4 text-sm font-semibold text-text-main" title="API Key">🔑</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Input Tokens</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main" style={{ color: "var(--color-info, #06b6d4)" }}>Cached</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Output Tokens</th>
@@ -268,7 +270,7 @@ export default function RequestDetailsTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="p-8 text-center text-text-muted">
+                  <td colSpan="9" className="p-8 text-center text-text-muted">
                     <div className="flex items-center justify-center gap-2">
                       <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
                       Loading...
@@ -277,7 +279,7 @@ export default function RequestDetailsTab() {
                 </tr>
               ) : details.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="p-8 text-center text-text-muted">
+                  <td colSpan="9" className="p-8 text-center text-text-muted">
                     No request details found
                   </td>
                 </tr>
@@ -298,6 +300,9 @@ export default function RequestDetailsTab() {
                          {getProviderName(detail.provider, providerNameCache)}
                        </span>
                      </td>
+                    <td className="p-4 text-center">
+                      <ApiKeyBadge apiKey={detail.apiKey} />
+                    </td>
                     <td className="p-4 text-sm text-text-main text-right font-mono">
                       {getInputTokens(detail.tokens).toLocaleString()}
                     </td>
@@ -400,6 +405,12 @@ export default function RequestDetailsTab() {
                   {selectedDetail.tokens?.completion_tokens?.toLocaleString() || 0}
                 </span>
               </div>
+              {selectedDetail.apiKey && (
+                <div className="col-span-2">
+                  <span className="text-text-muted">API Key:</span>{" "}
+                  <span className="text-text-main font-mono text-xs break-all">{selectedDetail.apiKey}</span>
+                </div>
+              )}
             </div>
             
             <div className="space-y-4">

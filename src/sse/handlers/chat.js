@@ -14,6 +14,7 @@ import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat } from "open-sse/services/combo.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
+import { checkLimit } from "@/lib/usageLimiter.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
@@ -76,6 +77,15 @@ export async function handleChat(request, clientRawRequest = null) {
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
+    }
+  }
+
+  // Check usage limits for this API key (O(1) in-memory lookup)
+  if (apiKey) {
+    const limitCheck = await checkLimit(apiKey);
+    if (!limitCheck.allowed) {
+      log.warn("LIMIT", limitCheck.reason);
+      return errorResponse(429, limitCheck.reason);
     }
   }
 

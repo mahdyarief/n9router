@@ -79,10 +79,56 @@ function rebuildModule(moduleName, cwd) {
   });
 }
 
+function installModule(moduleName, cwd) {
+  // When running inside `npm install -g`, npm sets npm_config_global=true and
+  // npm_config_prefix to the global prefix. Clear these so the inner npm install
+  // installs locally into cwd/node_modules instead of global node_modules.
+  const env = { ...process.env };
+  delete env.npm_config_global;
+  delete env.npm_config_prefix;
+  execSync(`${npmCmd} install ${moduleName} --prefix "${cwd}"`, {
+    env,
+    stdio: "inherit",
+    timeout: 180000,
+  });
+}
+
+function tryPrebuildInstall(moduleRoot) {
+  try {
+    info("Attempting to download prebuilt better-sqlite3 binary...");
+    execSync("npx prebuild-install --runtime electron --target 22.0.0 || npx prebuild-install", {
+      cwd: moduleRoot,
+      stdio: "pipe",
+      timeout: 60000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function ensureBetterSqlite3(locationName, moduleRoot) {
   if (!pathExists(moduleRoot)) {
-    info(`Skipping ${locationName}: better-sqlite3 not present`);
-    return;
+    const installCwd = path.dirname(path.dirname(moduleRoot));
+    const packageJsonPath = path.join(installCwd, "package.json");
+
+    if (!pathExists(packageJsonPath)) {
+      info(`Skipping ${locationName}: package.json not present`);
+      return;
+    }
+
+    info(`Installing better-sqlite3 in ${locationName}`);
+    try {
+      installModule("better-sqlite3", installCwd);
+    } catch (error) {
+      warn(`Install failed in ${locationName}: ${error.message}`);
+      return;
+    }
+
+    if (!pathExists(moduleRoot)) {
+      warn(`better-sqlite3 still missing in ${locationName} after install`);
+      return;
+    }
   }
 
   const binaryPath = path.join(moduleRoot, "build", "Release", "better_sqlite3.node");
@@ -108,9 +154,20 @@ function ensureBetterSqlite3(locationName, moduleRoot) {
     }
   }
 
-  // 2. Fall back to rebuild, but only if we have the source files
+  // 2. Try to download prebuilt binaries using prebuild-install
+  const prebuiltPath = path.join(moduleRoot, "build", "Release", "better_sqlite3.node");
+  if (tryPrebuildInstall(moduleRoot) && isBinaryValidForPlatform(prebuiltPath)) {
+    info(`Downloaded prebuilt better-sqlite3 for ${locationName}`);
+    return;
+  }
+
+  // 3. Fall back to rebuild from source, but only if we have the source files
   if (!pathExists(path.join(moduleRoot, "binding.gyp"))) {
-    info(`Skipping ${locationName} rebuild: binding.gyp not found (cannot rebuild from source)`);
+    warn(`Cannot rebuild better-sqlite3 in ${locationName}: binding.gyp not found`);
+    warn("API key usage limiting will be disabled. To fix, install build tools:");
+    warn("  macOS: xcode-select --install");
+    warn("  Linux: sudo apt-get install build-essential python3");
+    warn("  Windows: npm install --global windows-build-tools");
     return;
   }
 
@@ -118,7 +175,8 @@ function ensureBetterSqlite3(locationName, moduleRoot) {
     rebuildModule("better-sqlite3", path.dirname(path.dirname(moduleRoot)));
   } catch (error) {
     warn(`Rebuild failed in ${locationName}: ${error.message}`);
-    warn("Install will continue. Cursor token auto-import may use fallback mode.");
+    warn("API key usage limiting will be disabled.");
+    warn("The app will still work - install just won't track per-key usage limits.");
     return;
   }
 
@@ -126,6 +184,7 @@ function ensureBetterSqlite3(locationName, moduleRoot) {
     info(`better-sqlite3 rebuild succeeded in ${locationName}`);
   } else {
     warn(`better-sqlite3 still not valid in ${locationName} after rebuild`);
+    warn("API key usage limiting will be disabled.");
   }
 }
 
@@ -174,12 +233,14 @@ function copyOpenSse() {
 
 function main() {
   const standaloneRoot = resolveStandaloneRoot();
-  const targets = [
-    {
-      name: "root node_modules",
-      moduleRoot: path.join(pkgRoot, "node_modules", "better-sqlite3"),
-    },
-  ];
+  const targets = [];
+
+  // Only include root node_modules if it already exists (dev install).
+  // Published packages don't ship with root node_modules/better-sqlite3.
+  const rootModuleRoot = path.join(pkgRoot, "node_modules", "better-sqlite3");
+  if (pathExists(rootModuleRoot)) {
+    targets.push({ name: "root node_modules", moduleRoot: rootModuleRoot });
+  }
 
   if (standaloneRoot) {
     targets.push({
@@ -188,8 +249,21 @@ function main() {
     });
   }
 
+  let anySuccess = false;
   for (const target of targets) {
+    const binaryPath = path.join(target.moduleRoot, "build", "Release", "better_sqlite3.node");
     ensureBetterSqlite3(target.name, target.moduleRoot);
+    if (isBinaryValidForPlatform(binaryPath)) {
+      anySuccess = true;
+    }
+  }
+
+  // Summary message
+  if (anySuccess) {
+    info("better-sqlite3 is ready. API key usage limiting enabled.");
+  } else if (targets.some(t => pathExists(t.moduleRoot))) {
+    warn("better-sqlite3 could not be built. API key usage limiting disabled.");
+    warn("To enable usage limits, reinstall with build tools installed.");
   }
 
   copyOpenSse();
