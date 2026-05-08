@@ -258,10 +258,11 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
       ) {
         try {
           const parsed = JSON.parse(effectiveBody.toString());
+          const originalProject = parsed.project;
           if (parsed.project !== undefined && parsed.project !== conn.projectId) {
             parsed.project = conn.projectId;
             bodyForRequest = Buffer.from(JSON.stringify(parsed));
-            log(`🏗️ [token-swap] project rewrite → "${conn.projectId}" for "${label}"`);
+            log(`🏗️ [token-swap] project rewrite → "${conn.projectId}" for "${label}" (was: "${originalProject}")`);
           }
         } catch {
           // Non-JSON body or no project field — skip rewrite silently
