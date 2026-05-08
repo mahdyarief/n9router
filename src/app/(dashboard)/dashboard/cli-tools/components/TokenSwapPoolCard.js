@@ -372,6 +372,17 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
 
 
   /**
+   * Returns true if the event timestamp is from today (local time)
+   */
+  const isToday = (ts) => {
+    const now = new Date();
+    const d = new Date(ts);
+    return d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+  };
+
+  /**
    * Render the health dot strip for an account (last 100 calls)
    */
   const renderHealthDots = (accId) => {
@@ -388,19 +399,24 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
           className="flex flex-wrap gap-[2px]"
           title={`Last ${events.length} call${events.length !== 1 ? "s" : ""}${successCount ? ` · ${successCount} ok` : ""}${retryCount ? ` · ${retryCount} retry` : ""}${failCount ? ` · ${failCount} fail` : ""}`}
         >
-          {events.map((event, idx) => (
+          {events.map((event, idx) => {
+            const todayDot = isToday(event.ts);
+            const color = getHealthDotColor(event);
+            return (
             <div
               key={idx}
-              className="rounded-[1px] shrink-0"
+              className={`shrink-0 rounded-[1px]${todayDot ? " animate-pulse" : ""}`}
               style={{
-                width: "6px",
-                height: "6px",
-                backgroundColor: getHealthDotColor(event),
-                opacity: 0.85,
+                width: todayDot ? "7px" : "6px",
+                height: todayDot ? "7px" : "6px",
+                backgroundColor: color,
+                opacity: todayDot ? 1 : 0.45,
+                boxShadow: todayDot ? `0 0 5px 1px ${color}` : undefined,
               }}
               title={getHealthDotTitle(event)}
             />
-          ))}
+            );
+          })}
         </div>
         <div className="flex items-center gap-2 mt-0.5">
           <span className="text-[9px] text-text-muted">
