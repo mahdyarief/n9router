@@ -27,7 +27,7 @@ const { pushHealthEvent, getLastEventStatus, migrateToEmailKeys } = require("./h
 
 const { applyRtkCompression } = require("./rtkCompressor");
 const { applyAntigravityIdeVersionOverride } = require("./antigravityIdeVersion");
-const { getAntigravityHostRewriteTarget, getTokenSwapProjectRewriteEnabled } = require("./mitmSettings");
+const { getAntigravityHostRewriteTarget } = require("./mitmSettings");
 
 const DB_FILE = path.join(DATA_DIR, "db.json");
 const LOCAL_PORT = 443;
@@ -249,13 +249,9 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
       // The IDE's request body contains a `project` field tied to the original user's
       // Antigravity project. When we swap the auth token to a pool account, the upstream
       // validates that the project matches the token — mismatches return 403 PERMISSION_DENIED.
-      // We rewrite `project` to the pool connection's stored projectId when the setting is on.
+      // Always rewrite `project` to the pool connection's stored projectId.
       let bodyForRequest = effectiveBody;
-      if (
-        provider === "antigravity" &&
-        conn.projectId &&
-        getTokenSwapProjectRewriteEnabled(DB_FILE)
-      ) {
+      if (provider === "antigravity" && conn.projectId) {
         try {
           const parsed = JSON.parse(effectiveBody.toString());
           const originalProject = parsed.project;
