@@ -3,6 +3,11 @@
 ## v0.4.26 (2026-05-06)
 
 ### Features
+- Add **Usage Reports tab** with multi-dimensional analytics: period × metric × breakdown × granularity
+- Add **All / API Key / Model / Provider** breakdown selector — "All" shows aggregate trend with all three top-contributors charts simultaneously
+- Add **Today** period option — uses local midnight-to-now as a custom time range with automatic hourly granularity
+- Add **Day / Week / Month** chart granularity control — hidden for Today/24H which always use hourly buckets
+- Add monthly chart bucketing in the report aggregator (`interval=month`, labels like "May 2026")
 - Add compact usage/quota display in API Keys table with color-coded badges (green/amber/red) showing 5h/24h tokens and cost usage
 - Add inline API key name editing with pencil icon on hover (Enter to save, Escape to cancel)
 - Add custom time windows for rate limits — configure limits beyond 5h/24h (15min, 1h, 6h, 12h, 24h, 7d, 30d)
@@ -18,6 +23,9 @@
 
 ### Fixes
 - Return proper 429 rate limit error with descriptive message when API key exceeds any configured limit (legacy 5h/24h or custom windows)
+- Fix "All" breakdown not aggregating series — `_getSeriesLabel` now returns `"total"` for `seriesBy=none`
+- Fix Today chart showing no data — chart data now fills all series keys with `0` to avoid recharts skipping undefined stacked areas
+- Fix 24H period not using hourly granularity — Today and 24H now automatically force `interval=hour`
 
 ## v0.4.25 (2026-05-05)
 
