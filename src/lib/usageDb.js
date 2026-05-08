@@ -948,3 +948,4 @@ export async function getChartData(period = "7d") {
 
 // Re-export request details functions from new SQLite-based module
 export { saveRequestDetail, getRequestDetails, getRequestDetailById } from "./requestDetailsDb.js";
+
