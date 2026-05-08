@@ -672,19 +672,29 @@ const server = https.createServer(sslOptions, async (req, res) => {
         });
         const handled = await tokenSwapForward(req, res, bodyBuffer, poolConns, model, strategy, swapProvider, bodyCollectStart, debugContext);
         if (handled) return;
-        log(`⚠️ [${tool}] token-swap: all accounts exhausted, falling through to original token`);
+        // All token-swap accounts exhausted — passthrough to original token instead of
+        // falling through to mode A (mitmAlias intercept). Mode A should only run when
+        // token-swap is not configured at all for this provider.
+        log(`⚠️ [${tool}] token-swap: all accounts exhausted, passing through to original token`);
         debugContext?.log("token_swap.fallthrough", {
           tool,
           strategy,
           reason: "all_accounts_exhausted",
         });
+        return passthrough(req, res, bodyBuffer, null, debugContext);
       } else {
-        log(`⚠️ [token-swap] 0 active connections for provider=${swapProvider} model="${model || "any"}" — all on cooldown?`);
+        // Token-swap is enabled but no active connections (all on cooldown) — return
+        // 429 error so the client knows to retry later instead of passing through.
+        log(`⚠️ [token-swap] 0 active connections for provider=${swapProvider} model="${model || "any"}" — all on cooldown, returning 429`);
         debugContext?.log("token_swap.unavailable", {
           tool,
           strategy,
           reason: "no_active_connections",
         });
+        const errBody = JSON.stringify({ error: { message: "All token-swap accounts are on cooldown. Please retry later.", type: "rate_limit_error" } });
+        if (!res.headersSent) res.writeHead(429, { "Content-Type": "application/json" });
+        res.end(errBody);
+        return;
       }
     }
 
