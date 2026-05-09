@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.4.29 (2026-05-10)
+
+### Features
+- Add CommandCode provider support with OpenAI request/response translators, executor registration, provider icon, and unit coverage
+- Add Cloudflare Workers AI image generation support with model metadata and provider routing
+- Add Cowork MCP registry endpoint and support for custom Cowork host credentials in CLI tool settings
+- Add `/v1/audio/voices` and `/v1/models/info` compatibility endpoints
+- Add CapRover deployment definition and Chinese README translation
+
+### Improvements
+- Refactor connection proxy configuration logic for clearer proxy option handling
+- Improve CLI tool endpoint selection with shared `BaseUrlSelect` and cloud endpoint matching helpers
+- Update DeepSeek pricing and add DeepSeek V4 Pro model metadata
+- Expand combo/model selection UI with model deselection support
+
+### Fixes
+- Normalize Ollama Local provider input before validation and provider persistence
+- Prevent cached settings API responses so dashboard settings stay current
+- Fix localized README links
+- Improve compatible provider API key setup validation
+
+## v0.4.28 (2026-05-10)
+
+### Improvements
+- Migrate Docker runtime to Node.js for production startup compatibility
+- Require the current `HEAD` to be tagged as the matching release version before Docker publishing
+- Optimize dashboard usage tab switching and standardize token usage display logic
+- Standardize usage tracking stream accounting output
+
+## v0.4.27 (2026-05-09)
+
+### Features
+- Add Antigravity Payload Guard to restrict protected provider access and surface safer token-swap errors
+- Add multi-arch Docker publishing script with Docker Hub workflow support and `npm run publish:docker` commands
+- Add Antigravity MITM token-swap project ID rewrite controls
+
+### Improvements
+- Improve Antigravity token-swap pool health indicator behavior
+- Make project ID rewriting unconditional for Antigravity token-swap requests
+- Add token-swap diagnostics for project ID rewrite handling
+
+### Fixes
+- Rewrite Antigravity token-swap project IDs in request bodies to avoid `403 PERMISSION_DENIED`
+
 ## v0.4.26 (2026-05-06)
 
 ### Features
