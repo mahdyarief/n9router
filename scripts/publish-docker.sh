@@ -18,7 +18,10 @@ Options:
   --platform <platform>   Docker platform for buildx (default: linux/amd64,linux/arm64)
   -h, --help              Show this help
 
-The script pushes both:
+The script expects the release git tag format:
+  v<package.json version>
+
+The script pushes both Docker image tags:
   <image>:<package.json version>
   <image>:latest
 EOF
@@ -67,13 +70,24 @@ command -v docker >/dev/null || die "docker is not installed"
 docker buildx version >/dev/null 2>&1 || die "docker buildx is not available"
 
 VERSION="$(node -p "require('./package.json').version")"
+RELEASE_TAG="v${VERSION}"
 
 VERSION_REF="${IMAGE}:${VERSION}"
 LATEST_REF="${IMAGE}:latest"
 
-info "Image    : $IMAGE"
-info "Version  : $VERSION"
-info "Platform : $PLATFORM"
+info "Image       : $IMAGE"
+info "Version     : $VERSION"
+info "Release tag : $RELEASE_TAG"
+info "Platform    : $PLATFORM"
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  die "Not inside a git repository."
+fi
+
+CURRENT_TAG="$(git tag --points-at HEAD | grep -x "$RELEASE_TAG" || true)"
+if [[ -z "$CURRENT_TAG" ]]; then
+  die "Current HEAD is not tagged as $RELEASE_TAG. Create/push git tag $RELEASE_TAG before publishing Docker."
+fi
 
 if docker buildx imagetools inspect "$VERSION_REF" >/dev/null 2>&1; then
   if ! $FORCE; then
