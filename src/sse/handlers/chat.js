@@ -17,6 +17,7 @@ import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { checkLimit } from "@/lib/usageLimiter.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
+import { checkAntigravityGuard } from "../services/antigravityGuard.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
@@ -167,9 +168,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
+  
+  const guard = await checkAntigravityGuard({ provider, body, request });
+  if (guard.blocked) return guard.response;
+  const excludeConnectionIds = guard.excludeIds;
 
-  // Try with available accounts (fallback on errors)
-  const excludeConnectionIds = new Set();
   let lastError = null;
   let lastStatus = null;
 

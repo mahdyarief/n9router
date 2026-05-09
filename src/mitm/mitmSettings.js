@@ -85,6 +85,7 @@ function getAntigravityHostRewriteTarget(host, dbFile = DEFAULT_DB_FILE) {
   return host;
 }
 
+
 function resetMitmSettingsCache(dbFile = null) {
   if (dbFile) {
     settingsCache.delete(dbFile);

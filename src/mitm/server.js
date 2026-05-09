@@ -245,14 +245,34 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
         },
       });
 
+      // ── Project ID rewrite (fixes 403 when token is swapped to a different account) ──
+      // The IDE's request body contains a `project` field tied to the original user's
+      // Antigravity project. When we swap the auth token to a pool account, the upstream
+      // validates that the project matches the token — mismatches return 403 PERMISSION_DENIED.
+      // Always rewrite `project` to the pool connection's stored projectId.
+      let bodyForRequest = effectiveBody;
+      if (provider === "antigravity" && conn.projectId) {
+        try {
+          const parsed = JSON.parse(effectiveBody.toString());
+          const originalProject = parsed.project;
+          if (parsed.project !== undefined && parsed.project !== conn.projectId) {
+            parsed.project = conn.projectId;
+            bodyForRequest = Buffer.from(JSON.stringify(parsed));
+            log(`🏗️ [token-swap] project rewrite → "${conn.projectId}" for "${label}" (was: "${originalProject}")`);
+          }
+        } catch {
+          // Non-JSON body or no project field — skip rewrite silently
+        }
+      }
+
       const swappedHeaders = {
         ...headersForForwarding,
         host: targetHost,
         authorization: `Bearer ${conn.accessToken}`
       };
-      // Update Content-Length if the MITM changed the request body.
-      if (effectiveBody !== bodyBuffer) {
-        swappedHeaders['content-length'] = String(effectiveBody.length);
+      // Update Content-Length if the body changed (RTK compression or project rewrite).
+      if (bodyForRequest !== bodyBuffer) {
+        swappedHeaders['content-length'] = String(bodyForRequest.length);
       }
 
       try {
@@ -283,7 +303,7 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
             }
           });
           forwardReq.on("error", reject);
-          if (effectiveBody.length > 0) forwardReq.write(effectiveBody);
+          if (bodyForRequest.length > 0) forwardReq.write(bodyForRequest);
           forwardReq.end();
         });
 
@@ -652,19 +672,29 @@ const server = https.createServer(sslOptions, async (req, res) => {
         });
         const handled = await tokenSwapForward(req, res, bodyBuffer, poolConns, model, strategy, swapProvider, bodyCollectStart, debugContext);
         if (handled) return;
-        log(`⚠️ [${tool}] token-swap: all accounts exhausted, falling through to original token`);
+        // All token-swap accounts exhausted — passthrough to original token instead of
+        // falling through to mode A (mitmAlias intercept). Mode A should only run when
+        // token-swap is not configured at all for this provider.
+        log(`⚠️ [${tool}] token-swap: all accounts exhausted, passing through to original token`);
         debugContext?.log("token_swap.fallthrough", {
           tool,
           strategy,
           reason: "all_accounts_exhausted",
         });
+        return passthrough(req, res, bodyBuffer, null, debugContext);
       } else {
-        log(`⚠️ [token-swap] 0 active connections for provider=${swapProvider} model="${model || "any"}" — all on cooldown?`);
+        // Token-swap is enabled but no active connections (all on cooldown) — return
+        // 429 error so the client knows to retry later instead of passing through.
+        log(`⚠️ [token-swap] 0 active connections for provider=${swapProvider} model="${model || "any"}" — all on cooldown, returning 429`);
         debugContext?.log("token_swap.unavailable", {
           tool,
           strategy,
           reason: "no_active_connections",
         });
+        const errBody = JSON.stringify({ error: { message: "All token-swap accounts are on cooldown. Please retry later.", type: "rate_limit_error" } });
+        if (!res.headersSent) res.writeHead(429, { "Content-Type": "application/json" });
+        res.end(errBody);
+        return;
       }
     }
 

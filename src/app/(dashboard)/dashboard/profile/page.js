@@ -29,6 +29,7 @@ export default function ProfilePage() {
   const [antigravityIdeVersionDraft, setAntigravityIdeVersionDraft] = useState("1.23.2");
   const [antigravityIdeVersionStatus, setAntigravityIdeVersionStatus] = useState({ type: "", message: "" });
   const [antigravityIdeVersionLoading, setAntigravityIdeVersionLoading] = useState(false);
+  const [antigravityPayloadGuardLoading, setAntigravityPayloadGuardLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -338,6 +339,24 @@ export default function ProfilePage() {
     }
   };
 
+  const updateMitmAntigravityPayloadGuardEnabled = async (enabled) => {
+    setAntigravityPayloadGuardLoading(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mitmAntigravityPayloadGuardEnabled: enabled }),
+      });
+      if (res.ok) {
+        setSettings(prev => ({ ...prev, mitmAntigravityPayloadGuardEnabled: enabled }));
+      }
+    } catch (err) {
+      console.error("Failed to update mitmAntigravityPayloadGuardEnabled:", err);
+    } finally {
+      setAntigravityPayloadGuardLoading(false);
+    }
+  };
+
   const updateMitmAntigravityIdeVersion = async (event) => {
     event.preventDefault();
     const version = antigravityIdeVersionDraft.trim() || "1.23.2";
@@ -462,6 +481,7 @@ export default function ProfilePage() {
   const mitmAntigravityAutoDisableOnSonnetZero = settings.mitmAntigravityAutoDisableOnSonnetZero !== false;
   const mitmAntigravityIdeVersionOverrideEnabled = settings.mitmAntigravityIdeVersionOverrideEnabled === true;
   const mitmAntigravityHostRewriteEnabled = settings.mitmAntigravityHostRewriteEnabled !== false;
+  const mitmAntigravityPayloadGuardEnabled = settings.mitmAntigravityPayloadGuardEnabled !== false;
   const mitmAntigravityDebugLogDir = settings.mitmAntigravityDebugLogDir || "";
   const periodicDbBackupsEnabled = settings.periodicDbBackupsEnabled !== false;
 
@@ -865,6 +885,19 @@ export default function ProfilePage() {
               checked={mitmAntigravityAutoDisableOnSonnetZero}
               onChange={updateMitmAntigravityAutoDisableOnSonnetZero}
               disabled={loading}
+            />
+          </div>
+          <div className="flex items-center justify-between pt-4 mt-4 border-t border-border/50">
+            <div>
+              <p className="font-medium">Antigravity Payload Guard</p>
+              <p className="text-sm text-text-muted">
+                Only allow token-swap for requests that originate from the Antigravity IDE. Requests from other tools (Claude Code, Codex, etc.) pass through to their original token.
+              </p>
+            </div>
+            <Toggle
+              checked={mitmAntigravityPayloadGuardEnabled}
+              onChange={updateMitmAntigravityPayloadGuardEnabled}
+              disabled={loading || antigravityPayloadGuardLoading}
             />
           </div>
           <div className="flex items-center justify-between pt-4 mt-4 border-t border-border/50">
