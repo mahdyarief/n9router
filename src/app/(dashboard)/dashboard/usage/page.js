@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
+import { UsageStats, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
 import ApiKeyUsageReport from "./components/ApiKeyUsageReport";
 
@@ -14,25 +14,29 @@ export default function UsagePage() {
   );
 }
 
+const TOP_LEVEL_TABS = ["overview", "details", "report"];
+
+function getValidTopLevelTab(tab) {
+  return TOP_LEVEL_TABS.includes(tab) ? tab : "overview";
+}
+
 function UsageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const [tabLoading, setTabLoading] = useState(false);
+  const urlTab = getValidTopLevelTab(searchParams.get("tab"));
+  const [selectedTab, setSelectedTab] = useState(urlTab);
 
-  const tabFromUrl = searchParams.get("tab");
-  const activeTab = tabFromUrl && ["overview", "logs", "details", "report"].includes(tabFromUrl)
-    ? tabFromUrl
-    : "overview";
+  useEffect(() => {
+    setSelectedTab(urlTab);
+  }, [urlTab]);
 
   const handleTabChange = (value) => {
-    if (value === activeTab) return;
-    setTabLoading(true);
+    if (value === selectedTab) return;
+    setSelectedTab(value);
     const params = new URLSearchParams(searchParams);
     params.set("tab", value);
     router.push(`/dashboard/usage?${params.toString()}`, { scroll: false });
-    // Brief loading flash so user sees feedback
-    setTimeout(() => setTabLoading(false), 300);
   };
 
   return (
@@ -43,25 +47,18 @@ function UsageContent() {
           { value: "details", label: "Details" },
           { value: "report", label: "Reports" },
         ]}
-        value={activeTab}
+        value={selectedTab}
         onChange={handleTabChange}
         className="w-full sm:w-auto"
       />
 
-      {tabLoading ? (
-        <CardSkeleton />
-      ) : (
-        <>
-          {activeTab === "overview" && (
-            <Suspense fallback={<CardSkeleton />}>
-              <UsageStats />
-            </Suspense>
-          )}
-          {activeTab === "logs" && <RequestLogger />}
-          {activeTab === "details" && <RequestDetailsTab />}
-          {activeTab === "report" && <ApiKeyUsageReport />}
-        </>
+      {selectedTab === "overview" && (
+        <Suspense fallback={<CardSkeleton />}>
+          <UsageStats />
+        </Suspense>
       )}
+      {selectedTab === "details" && <RequestDetailsTab />}
+      {selectedTab === "report" && <ApiKeyUsageReport />}
     </div>
   );
 }

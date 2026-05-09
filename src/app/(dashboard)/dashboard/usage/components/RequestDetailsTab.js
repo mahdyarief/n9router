@@ -93,6 +93,10 @@ function getCachedTokens(tokens) {
   return tokens?.cache_read_input_tokens || tokens?.cached_tokens || tokens?.prompt_tokens_details?.cached_tokens || 0;
 }
 
+function getOutputTokens(tokens) {
+  return tokens?.completion_tokens || tokens?.output_tokens || 0;
+}
+
 export default function RequestDetailsTab() {
   const [details, setDetails] = useState([]);
   const [pagination, setPagination] = useState({
@@ -310,7 +314,7 @@ export default function RequestDetailsTab() {
                       {getCachedTokens(detail.tokens) > 0 ? getCachedTokens(detail.tokens).toLocaleString() : "—"}
                     </td>
                     <td className="p-4 text-sm text-text-main text-right font-mono">
-                      {detail.tokens?.completion_tokens?.toLocaleString() || 0}
+                      {getOutputTokens(detail.tokens).toLocaleString()}
                     </td>
                     <td className="p-4 text-sm text-text-muted">
                       <div className="flex flex-col gap-0.5">
@@ -402,7 +406,7 @@ export default function RequestDetailsTab() {
               <div>
                 <span className="text-text-muted">Output Tokens:</span>{" "}
                 <span className="text-text-main font-mono">
-                  {selectedDetail.tokens?.completion_tokens?.toLocaleString() || 0}
+                  {getOutputTokens(selectedDetail.tokens).toLocaleString()}
                 </span>
               </div>
               {selectedDetail.apiKey && (
