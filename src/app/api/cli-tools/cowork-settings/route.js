@@ -183,12 +183,14 @@ export async function GET() {
 export async function POST(request) {
   try {
     const { baseUrl, apiKey, models } = await request.json();
+    const normalizedBaseUrl = typeof baseUrl === "string" ? baseUrl.trim() : "";
+    const normalizedApiKey = typeof apiKey === "string" ? apiKey.trim() : "";
 
-    if (!baseUrl || !apiKey) {
+    if (!normalizedBaseUrl || !normalizedApiKey) {
       return NextResponse.json({ error: "baseUrl and apiKey are required" }, { status: 400 });
     }
 
-    if (isLocalhostUrl(baseUrl)) {
+    if (isLocalhostUrl(normalizedBaseUrl)) {
       return NextResponse.json({
         error: "Claude Cowork sandbox cannot reach localhost. Enable Tunnel/Cloud Endpoint or use Tailscale/VPS.",
       }, { status: 400 });
@@ -205,8 +207,8 @@ export async function POST(request) {
 
     const newConfig = {
       inferenceProvider: PROVIDER,
-      inferenceGatewayBaseUrl: baseUrl,
-      inferenceGatewayApiKey: apiKey,
+      inferenceGatewayBaseUrl: normalizedBaseUrl,
+      inferenceGatewayApiKey: normalizedApiKey,
       inferenceModels: modelsArray.map((name) => ({ name })),
     };
 
