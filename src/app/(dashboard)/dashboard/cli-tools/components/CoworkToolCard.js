@@ -37,7 +37,9 @@ export default function CoworkToolCard({
   const [restoring, setRestoring] = useState(false);
   const [message, setMessage] = useState(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
+  const [manualApiKey, setManualApiKey] = useState("");
   const [selectedModels, setSelectedModels] = useState([]);
+  const [modelInput, setModelInput] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
@@ -85,7 +87,14 @@ export default function CoworkToolCard({
       setCustomBaseUrl(stripV1(status.cowork.baseUrl));
       setEndpointMode("custom");
     }
-  }, [status]);
+    if (status?.config?.inferenceGatewayApiKey && !selectedApiKey && !manualApiKey) {
+      const savedApiKey = status.config.inferenceGatewayApiKey;
+      setSelectedApiKey(savedApiKey);
+      setManualApiKey(savedApiKey);
+    }
+  }, [status, customBaseUrl, selectedApiKey, manualApiKey]);
+
+  const isManualApiKeyMode = endpointMode === "custom";
 
   // Auto-pick first available preset when expand if user has not set anything
   useEffect(() => {
@@ -141,10 +150,21 @@ export default function CoworkToolCard({
     }
   };
 
+  const addModel = () => {
+    const value = modelInput.trim();
+    if (!value || selectedModels.includes(value)) return;
+    setSelectedModels((prev) => [...prev, value]);
+    setModelInput("");
+  };
+
   const handleApply = async () => {
     setMessage(null);
     const effectiveUrl = getEffectiveBaseUrl();
 
+    if (!effectiveUrl) {
+      setMessage({ type: "error", text: "Please enter a public base URL" });
+      return;
+    }
     if (isLocalhostUrl(effectiveUrl)) {
       setMessage({ type: "error", text: "Localhost is not allowed. Enable Tunnel/Tailscale or use VPS." });
       return;
@@ -154,12 +174,19 @@ export default function CoworkToolCard({
       return;
     }
 
-    setApplying(true);
-    try {
-      const keyToUse = selectedApiKey?.trim()
+    const keyToUse = isManualApiKeyMode
+      ? manualApiKey.trim()
+      : selectedApiKey?.trim()
         || (apiKeys?.length > 0 ? apiKeys[0].key : null)
         || (!cloudEnabled ? "sk_9router" : null);
 
+    if (!keyToUse) {
+      setMessage({ type: "error", text: isManualApiKeyMode ? "Please enter an API key" : "Please select an API key" });
+      return;
+    }
+
+    setApplying(true);
+    try {
       const res = await fetch(ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -204,9 +231,11 @@ export default function CoworkToolCard({
   };
 
   const getManualConfigs = () => {
-    const keyToUse = (selectedApiKey && selectedApiKey.trim())
-      ? selectedApiKey
-      : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
+    const keyToUse = isManualApiKeyMode
+      ? (manualApiKey.trim() || "<API_KEY_FOR_PUBLIC_HOST>")
+      : (selectedApiKey && selectedApiKey.trim())
+        ? selectedApiKey
+        : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
 
     const modelsToShow = selectedModels.length > 0 ? selectedModels : ["provider/model-id"];
     const cfg = {
@@ -317,16 +346,31 @@ export default function CoworkToolCard({
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                   <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">API Key</span>
                   <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  {apiKeys.length > 0 || selectedApiKey ? (
-                    <select value={selectedApiKey} onChange={(e) => setSelectedApiKey(e.target.value)} className="w-full min-w-0 px-2 py-2 bg-surface rounded text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5">
-                      {hasCustomSelectedApiKey && <option value={selectedApiKey}>{selectedApiKey}</option>}
-                      {apiKeys.map((key) => <option key={key.id} value={key.key}>{key.key} ({key.name})</option>)}
-                    </select>
-                  ) : (
-                    <span className="min-w-0 rounded bg-surface/40 px-2 py-2 text-xs text-text-muted sm:py-1.5">
-                      {cloudEnabled ? "No API keys - Create one in Keys page" : "sk_9router (default)"}
-                    </span>
-                  )}
+                  <div className="flex min-w-0 flex-col gap-1">
+                    {isManualApiKeyMode ? (
+                      <>
+                        <input
+                          type="password"
+                          value={manualApiKey}
+                          onChange={(e) => setManualApiKey(e.target.value)}
+                          placeholder="Enter API key for this public host"
+                          className="w-full min-w-0 px-2 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
+                        />
+                        <span className="text-[11px] text-text-muted">
+                          Used only for this custom public host.
+                        </span>
+                      </>
+                    ) : apiKeys.length > 0 || selectedApiKey ? (
+                      <select value={selectedApiKey} onChange={(e) => setSelectedApiKey(e.target.value)} className="w-full min-w-0 px-2 py-2 bg-surface rounded text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5">
+                        {hasCustomSelectedApiKey && <option value={selectedApiKey}>{selectedApiKey}</option>}
+                        {apiKeys.map((key) => <option key={key.id} value={key.key}>{key.key} ({key.name})</option>)}
+                      </select>
+                    ) : (
+                      <span className="min-w-0 rounded bg-surface/40 px-2 py-2 text-xs text-text-muted sm:py-1.5">
+                        {cloudEnabled ? "No API keys - Create one in Keys page" : "sk_9router (default)"}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-2">
@@ -347,6 +391,26 @@ export default function CoworkToolCard({
                         ))
                       )}
                     </div>
+                    {isManualApiKeyMode && (
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <input
+                          type="text"
+                          value={modelInput}
+                          onChange={(e) => setModelInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              addModel();
+                            }
+                          }}
+                          placeholder="provider/model-id"
+                          className="w-full min-w-0 px-2 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
+                        />
+                        <button onClick={addModel} className="shrink-0 rounded border border-border px-2 py-2 text-xs text-text-main transition-colors hover:border-primary sm:py-1.5">
+                          Add
+                        </button>
+                      </div>
+                    )}
                     <button onClick={() => setModalOpen(true)} disabled={!hasActiveProviders} className={`self-start px-2 py-1 rounded border text-xs transition-colors ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Add Model</button>
                   </div>
                 </div>
