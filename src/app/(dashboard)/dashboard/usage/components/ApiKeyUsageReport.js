@@ -7,6 +7,7 @@ import SegmentedControl from "@/shared/components/SegmentedControl";
 import ReportMetricCards from "./ReportMetricCards";
 import ReportTrendChart from "./ReportTrendChart";
 import ReportBreakdownTable from "./ReportBreakdownTable";
+import UsageFlexReport from "./UsageFlexReport";
 
 const PERIOD_OPTIONS = [
   { value: "today", label: "Today" },
@@ -182,6 +183,16 @@ export default function ApiKeyUsageReport() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {/* Usage Flex — social share card */}
+      <UsageFlexReport />
+
+      {/* Divider */}
+      <div className="flex items-center gap-3 pt-2">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-xs font-semibold uppercase tracking-wider text-text-muted shrink-0">Detailed API Key Report</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+
       {/* Filter Bar */}
       <div className="flex min-w-0 flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
