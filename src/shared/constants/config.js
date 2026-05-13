@@ -9,13 +9,13 @@ export const APP_CONFIG = {
 
 // GitHub configuration
 export const GITHUB_CONFIG = {
-  changelogUrl: "https://raw.githubusercontent.com/decolua/9router/refs/heads/master/CHANGELOG.md",
+  changelogUrl: "https://raw.githubusercontent.com/nightwalker89/n9router/refs/heads/master/CHANGELOG.md",
 };
 
 // Updater configuration
 export const UPDATER_CONFIG = {
-  npmPackageName: "9router",
-  installCmd: "npm i -g 9router",
+  npmPackageName: "n9router",
+  installCmd: "npm i -g n9router",
   exitDelayMs: 500,
   statusPort: 20129,
   statusPollIntervalMs: 1000,

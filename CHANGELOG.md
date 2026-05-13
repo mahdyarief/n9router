@@ -1,8 +1,20 @@
 # Changelog
 
+## v0.4.30 (2026-05-13)
+
+### Features
+
+- Add **Usage Flex Report** — exportable social-share card for API key usage metrics with configurable presets (1080×1080 canvas, copy-to-clipboard, PNG export)
+- Add `UsageFlexCard` and `UsageFlexReport` components with multi-preset support covering tokens, cost, requests, and model breakdown views
+
+### Improvements
+
+- Refactor account toggling and quota refreshing states from booleans to `Set` objects in `TokenSwapPoolCard` to support concurrent per-account operations without race conditions
+
 ## v0.4.29 (2026-05-10)
 
 ### Features
+
 - Add CommandCode provider support with OpenAI request/response translators, executor registration, provider icon, and unit coverage
 - Add Cloudflare Workers AI image generation support with model metadata and provider routing
 - Add Cowork MCP registry endpoint and support for custom Cowork host credentials in CLI tool settings
@@ -10,12 +22,14 @@
 - Add CapRover deployment definition and Chinese README translation
 
 ### Improvements
+
 - Refactor connection proxy configuration logic for clearer proxy option handling
 - Improve CLI tool endpoint selection with shared `BaseUrlSelect` and cloud endpoint matching helpers
 - Update DeepSeek pricing and add DeepSeek V4 Pro model metadata
 - Expand combo/model selection UI with model deselection support
 
 ### Fixes
+
 - Normalize Ollama Local provider input before validation and provider persistence
 - Prevent cached settings API responses so dashboard settings stay current
 - Fix localized README links
@@ -24,6 +38,7 @@
 ## v0.4.28 (2026-05-10)
 
 ### Improvements
+
 - Migrate Docker runtime to Node.js for production startup compatibility
 - Require the current `HEAD` to be tagged as the matching release version before Docker publishing
 - Optimize dashboard usage tab switching and standardize token usage display logic
@@ -32,21 +47,25 @@
 ## v0.4.27 (2026-05-09)
 
 ### Features
+
 - Add Antigravity Payload Guard to restrict protected provider access and surface safer token-swap errors
 - Add multi-arch Docker publishing script with Docker Hub workflow support and `npm run publish:docker` commands
 - Add Antigravity MITM token-swap project ID rewrite controls
 
 ### Improvements
+
 - Improve Antigravity token-swap pool health indicator behavior
 - Make project ID rewriting unconditional for Antigravity token-swap requests
 - Add token-swap diagnostics for project ID rewrite handling
 
 ### Fixes
+
 - Rewrite Antigravity token-swap project IDs in request bodies to avoid `403 PERMISSION_DENIED`
 
 ## v0.4.26 (2026-05-06)
 
 ### Features
+
 - Add **Usage Reports tab** with multi-dimensional analytics: period × metric × breakdown × granularity
 - Add **All / API Key / Model / Provider** breakdown selector — "All" shows aggregate trend with all three top-contributors charts simultaneously
 - Add **Today** period option — uses local midnight-to-now as a custom time range with automatic hourly granularity
@@ -61,11 +80,13 @@
 - Add reset history tracking — logs all usage reset events with tokens/cost cleared and timestamp, viewable in limits editor
 
 ### Improvements
+
 - Auto-fetch usage data for keys with limits on dashboard load
 - Extended usage data retention to 30 days to support monthly window tracking
 - Add `validateWindow()` helper and `PREDEFINED_DURATIONS` export in usageLimiter.js
 
 ### Fixes
+
 - Return proper 429 rate limit error with descriptive message when API key exceeds any configured limit (legacy 5h/24h or custom windows)
 - Fix "All" breakdown not aggregating series — `_getSeriesLabel` now returns `"total"` for `seriesBy=none`
 - Fix Today chart showing no data — chart data now fills all series keys with `0` to avoid recharts skipping undefined stacked areas
@@ -74,6 +95,7 @@
 ## v0.4.25 (2026-05-05)
 
 ### Features
+
 - Add STT (Speech-to-Text) support with multiple providers (Edge TTS, ElevenLabs, Google TTS, OpenAI, OpenRouter, Local Device)
 - Add Gemini TTS integration and expand usage tracking with additional metrics
 - Add Skills feature for reusable AI interaction patterns
@@ -90,6 +112,7 @@
 - Add sticky round-robin support for combo routing
 
 ### Improvements
+
 - Refactor global styles and enhance MITM functionality
 - Refactor proxyFetch and enhance MediaProviderDetailPage layout
 - Refactor token refresh logic and improve MITM server handling
@@ -101,6 +124,7 @@
 - Support custom host URL for remote Ollama servers
 
 ### Fixes
+
 - Strip stream_options for Qwen non-streaming Claude Code requests
 - Preserve reasoning_effort for non-Claude models in GitHub provider
 - Update Qwen OAuth URLs from chat.qwen.ai to qwen.ai
@@ -117,16 +141,19 @@
 ## v0.4.24 (2026-05-02)
 
 ### Features
+
 - Add Xiaomi MiMo provider support with built-in model metadata, validation endpoint, and provider icon
 - Add Caveman prompt injection controls in the RTK request path, applied just before provider dispatch
 - Add sticky round-robin support for combo routing so each combo model can receive multiple requests before rotating
 
 ### Improvements
+
 - Move RTK compression to the final dispatch body so it works for both translated and native passthrough requests
 - Add API key setup URLs across provider cards and improve responsive dashboard layouts for CLI tools, providers, usage, profile, and endpoint pages
 - Add cached-token usage metrics and richer provider limit/topology displays in the usage dashboard
 
 ### Fixes
+
 - Normalize Claude text-only content arrays to OpenAI-safe strings and parse raw NDJSON stream lines without requiring an explicit Ollama format
 - Strip unsupported Anthropic `output_config` for MiniMax Claude-compatible requests while preserving it for Anthropic
 - Merge Antigravity tool declaration groups into a single Gemini-compatible group before token-swap dispatch
@@ -134,27 +161,33 @@
 ## v0.4.23 (2026-05-02)
 
 ### Fixes
+
 - Treat Antigravity MITM token-swap `403` IAM permission errors as retryable account fallback events, matching the existing `429`/`503` retry path
 
 ## v0.4.21 (2026-04-30)
 
 ### Features
+
 - Add Antigravity host rewrite setting to avoid rate limits — toggle in Profile settings rewrites upstream host on each request
 
 ### Improvements
+
 - Centralize MITM settings into a dedicated `mitmSettings.js` module for cleaner settings management
 - Refactor `MitmToolCard` with a `DnsToggleButton` sub-component, improved DNS toggle UI, and abort signal support in fetch logic
 - Refactor Antigravity logging to use consistent terminology and clear forced passthrough model list
 
 ### Fixes
+
 - Rewrite Antigravity MITM handler to use direct `fetchRouter`/`pipeSSE` pipeline with proper SSE and non-SSE error responses — prevents SDK from hanging when an error occurs mid-stream
 
 ## v0.4.20 (2026-04-29)
 
 ### Features
+
 - Add Antigravity MITM token-swap IDE version override with Profile settings toggle and configurable version, defaulting to `1.23.2`
 
 ### Improvements
+
 - Rewrite both Antigravity request `metadata.ideVersion` and `user-agent` version when the override is enabled
 - Route `/v1internal:loadCodeAssist` through Antigravity MITM token swap so eligibility-check requests can use the override
 - Add a Profile settings notice that IDE version spoofing is used at your own risk
@@ -162,15 +195,18 @@
 ## v0.4.16 (2026-04-24)
 
 ### Features
+
 - Add hourly `db.json` backups with 3-day retention and a Profile settings toggle enabled by default
 
 ### Fixes
+
 - Prevent token-swap DB writes from racing normal local DB writes by using shared locking and atomic JSON updates
 - Stop resetting `db.json` to defaults on corrupt JSON; restore from a valid backup or preserve the corrupt file for recovery
 
 ## v0.4.15 (2026-04-24)
 
 ### Features
+
 - Add Azure OpenAI provider support
 - Add built-in Volcengine Ark provider support (#741)
 - Add GPT 5.5 model
@@ -178,43 +214,50 @@
 - Add in-app version update mechanism (appUpdater + /api/version/update)
 
 ### Improvements
+
 - Strengthen CLI token validation for enhanced security
 - Enhance Sidebar layout for CLI tools
 - Update executors and runtime config
 
 ### Fixes
+
 - Enhance retry logic and configuration for HTTP status codes
 
 ## v0.4.14 (2026-04-23)
 
 ### Features
+
 - Integrate RTK (Token Killer) compression into the MITM token-swap path — large tool outputs (git-diff, grep, ls, etc.) are now compressed before forwarding to upstream providers, reducing token usage by ~7% on real workloads
 
 ## v0.4.12 (2026-04-23)
 
-
 ### Features
+
 - Add RTK — filter context (ls/grep/find/...) before sending to LLM to save tokens
 - Add OpenCode Go provider and support for custom models
 - Add Text To Image provider
 - Support custom host URL for remote Ollama servers
 
 ### Fixes
+
 - Fix copy to clipboard issue
 
 ## v0.4.11 (2026-04-23)
 
 ### Features
+
 - Add per-account request health monitor in MITM Token Swap dashboard — last 100 calls displayed as colored 6×6px squares (green = success, orange gradient = retry success, red = fail) with live summary counts and hover tooltips
 - Persist health history to `~/.n9router/account-health.json`; survives server restarts; polled every 10s in the dashboard
 
 ### Improvements
+
 - Treat Antigravity 429 and 503 errors identically — both now retry the same account with exponential backoff (shared `_quotaRetryCount` counter, reuses per-account retry count setting)
 - Apply cooldown/strike only after **2 consecutive fail** health events; a single 429/503 burst skips the account without penalising it, reducing false-positive cooldowns from Antigravity's random error responses
 
 ## v0.4.8 (2026-04-19)
 
 ### Features
+
 - Add Kiro AWS Identity Center device flow for provider OAuth (`b1288c5`)
 - Add marked package for Markdown rendering and enhance changelog styles (`75c4598`)
 - Add TTS (Text-to-Speech) core handler and TTS models config
@@ -225,6 +268,7 @@
 - Add GLM-5 and MiniMax-M2.5 models to Kiro provider (#580) (`aa67198`)
 
 ### Improvements
+
 - Refactor error handling to config-driven approach with centralized error rules (`b669b6f`)
 - Refactor localDb and usageDb for cleaner structure (`75ad0be`)
 - Update Qwen executor for OAuth handling (`75c4598`)
@@ -238,6 +282,7 @@
 - Auto-build Docker image on tag push (#547) (`befb2bc`)
 
 ### Fixes
+
 - Fix Codex image URL fetches to await before sending upstream (#575) (`d0ace2a`)
 - Strip thinking/reasoning_effort for GitHub Copilot chat completions (#623) (`afe09f3`)
 - Show quota auth expired message for Kiro social auth accounts (#588) (`2e8784c`)
@@ -253,38 +298,45 @@
 ## v0.4.7 (2026-04-14)
 
 ### Features
+
 - Enhance provider models and chat handling with new thinking configurations (`4c28a16`)
 - Enhance proxy functionality with Vercel relay support (`89eb26d`)
 - Enhance TTS functionality and security settings (`b3feb96`)
 
 ### Improvements
+
 - Update GitHub Actions workflow for Docker image (`ee1271b`)
 - Parameterize Bun image and improve package management in Dockerfile (`7887f4f`)
 - Update Docker build process and documentation (`5d3780c`)
 - Add Docker support and improve Dockerfile configuration (`d99f63c`)
 
 ### Docs
+
 - Update README with new Antigravity Token Swap tutorial video (`177e8c9`)
 - Update star chart link to reflect repository migration (`8996eff`)
 
 ## v0.4.5 (2026-04-11)
 
 ### Fixes
+
 - Fix: update Tailscale directory paths from `.9router` to `.n9router` (`3d68aeb`)
 
 ## v0.4.3 (2026-04-11)
 
 ### Features
+
 - Add Tailscale remote access support (`ed17a8f`)
 - Add TTS (text-to-speech) endpoint support (`3c96e8d`)
 - Multi-model support for OpenCode CLI config with subagent integration (`1a25c6e`)
 - CLI: add `--update` and `--version` flags, and startup version announcement (`6fbeef4`)
 
 ### Improvements
+
 - Replace sticky round-robin with least-recently-used (LRU) connection selection strategy (`6d11114`)
 - Improve Windows Antigravity DNS error handling (`e289908`)
 
 ### Fixes
+
 - Add 5s timeout to `fetchCompatibleModelIds` and skip upstream connections (#541) (`838d9a7`)
 - Only strip `reasoning_content` when content is non-empty (#542) (`878cdf3`)
 - Enable Apply button when models are selected (`f8a2677`)
@@ -294,29 +346,34 @@
 ## v0.3.99 (2026-04-09)
 
 ### Features
+
 - Persist model quota status and hard-filter exhausted accounts in token pool (`ce713e4`)
 - Implement antigravity account type inference, local quota fallback, and UI badges (`3b5a5b7`)
 - Implement immediate cooldown logic for capacity exhaustion and human-readable reset time formatting (`ecc4a4d`)
 - Token Swap Pool feature with rotating token support (`737012f`)
 
 ### Improvements
+
 - Centralize `formatResetTimeDisplay` utility and update quota reset logic in TokenSwapPoolCard (`df73cd7`)
 - NPM release packaging (`81e5101`)
 
 ### Fixes
+
 - Simplify sudo password validation in AntigravityToolCard, MitmServerCard, and MitmToolCard (`db85dd2`)
 
 ### Docs
-- Add Token Swap Pool feature to README (`199940a`)
 
+- Add Token Swap Pool feature to README (`199940a`)
 
 ## v0.3.96 (2026-04-17)
 
 ### Features
+
 - Add marked package for Markdown rendering
 - Enhance changelog styles
 
 ### Improvements
+
 - Refactor error handling to config-driven approach with centralized error rules
 - Refactor localDb structure
 - Update Qwen executor for OAuth handling
@@ -327,6 +384,7 @@
 - Add installation guides for manual configuration in tool cards (Droid, Claude, OpenClaw)
 
 ### Fixes
+
 - Fix Codex image URL fetches to await before sending upstream (#575)
 - Strip thinking/reasoning_effort for GitHub Copilot chat completions (#623)
 - Enable Codex Apply/Reset buttons when CLI is installed (#591)
@@ -343,29 +401,35 @@
 ## v0.3.91 (2026-04-15)
 
 ### Features
+
 - Add Kiro AWS Identity Center device flow for provider OAuth
 - Add TTS (Text-to-Speech) core handler and TTS models config
 - Add media providers dashboard page
 - Add suggested models API endpoint
 
 ### Improvements
+
 - Refactor error handling to config-driven approach with centralized error rules
 - Refactor localDb and usageDb for cleaner structure
 
 ### Fixes
+
 - Fix usage tracking bug
 
 ## v0.3.90 (2026-04-14)
 
 ### Features
+
 - Add proactive token refresh lead times for providers and Codex proxy management
 - Enhance CodexExecutor with compact URL support
 
 ### Improvements
+
 - Enhance Windows Tailscale installation with curl support and fallback to well-known Windows path
 - Refactor execSync and spawn calls with windowsHide option for better Windows compatibility
 
 ### Fixes
+
 - Fix noAuth support for providers and adjusted MITM restart settings
 - Bug fixes
 
@@ -374,6 +438,7 @@
 ## v0.3.83 (2026-04-08)
 
 ### Fixes
+
 - Fix unauthenticated server shutdown endpoint security vulnerability (#519) (`1f3d3a8`)
 - Merge consecutive `userInputMessages` in openai-to-kiro translator (#524) (`23abe1a`)
 - Update Cursor client version to 3.1.0 for Composer 2 compatibility (#525) (`32a7461`)
@@ -388,6 +453,7 @@
 ## v0.3.75 (2026-04-05)
 
 ### Features
+
 - Translator: lossless passthrough via CLI tool + provider pairing (`666aecf`)
 - Embedding support (`5448eed`)
 - Add GitLab Duo and CodeBuddy support, update observability settings (`abbf8ec`)
@@ -405,12 +471,14 @@
 - Add optional modelID input for custom API Key Providers testing (#315) (`65af432`)
 
 ### Improvements
+
 - Enhance passthrough function to support response inspection (`fd4ec9e`)
 - Enhance image support in Kiro for Claude models (`8df8b94`, `4496bf9`)
 - Refactor error logging to provide clearer context on provider failures (`f264bb9`)
 - Update MITM bypass logic and enhance combo name validation (`f1c53a3`)
 
 ### Fixes
+
 - Correct thought signatures for AG, Gemini CLI, Vertex; fix missing Vertex response translator (`1973fe5`)
 - Fix Qwen provider (`2b1faeb`)
 - Pass `isFree` prop to ModelRow for custom models (#480) (`2e740ad`)

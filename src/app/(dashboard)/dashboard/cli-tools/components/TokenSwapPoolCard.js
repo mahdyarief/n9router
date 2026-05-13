@@ -98,8 +98,8 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
 
   const [retryCount503, setRetryCount503] = useState(DEFAULT_503_RETRY_COUNT); // global 503 retry count
   const [accountRetryOverrides, setAccountRetryOverrides] = useState({}); // local optimistic state for per-account 503 retry inputs
-  const [togglingAccountId, setTogglingAccountId] = useState(null);
-  const [refreshingQuotaId, setRefreshingQuotaId] = useState(null);
+  const [togglingAccountIds, setTogglingAccountIds] = useState(new Set());
+  const [refreshingQuotaIds, setRefreshingQuotaIds] = useState(new Set());
   const [refreshingAllQuotas, setRefreshingAllQuotas] = useState(false);
   const [quotas, setQuotas] = useState({}); // { [connId]: { quotas: [], error: string|null, loading: bool, accountType?: string|null } }
   const quotaCacheRef = useRef({}); // { [connId]: { data: parsed, error, ts: number, accountType?: string|null } }
@@ -468,8 +468,8 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
   };
 
   const toggleAccountActive = async (accountId, nextActive) => {
-    if (!accountId || togglingAccountId || refreshingQuotaId) return;
-    setTogglingAccountId(accountId);
+    if (!accountId || togglingAccountIds.has(accountId)) return;
+    setTogglingAccountIds(prev => new Set([...prev, accountId]));
     try {
       const res = await fetch(`/api/providers/${accountId}`, {
         method: "PUT",
@@ -480,20 +480,20 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
         await onRefreshConnections?.();
       }
     } catch { /* ignore */ }
-    setTogglingAccountId(null);
+    setTogglingAccountIds(prev => { const next = new Set(prev); next.delete(accountId); return next; });
   };
 
   const refreshAccountQuota = async (acc) => {
-    if (!acc?.id || refreshingQuotaId || refreshingAllQuotas || togglingAccountId) return;
-    setRefreshingQuotaId(acc.id);
+    if (!acc?.id || refreshingQuotaIds.has(acc.id) || refreshingAllQuotas || togglingAccountIds.has(acc.id)) return;
+    setRefreshingQuotaIds(prev => new Set([...prev, acc.id]));
     // Bust cache for this account and force a fresh fetch
     delete quotaCacheRef.current[acc.id];
     await fetchQuotas([acc], true);
-    setRefreshingQuotaId(null);
+    setRefreshingQuotaIds(prev => { const next = new Set(prev); next.delete(acc.id); return next; });
   };
 
   const refreshAllQuotas = async () => {
-    if (refreshingAllQuotas || !!refreshingQuotaId || providerAccounts.length === 0) return;
+    if (refreshingAllQuotas || refreshingQuotaIds.size > 0 || providerAccounts.length === 0) return;
     setRefreshingAllQuotas(true);
     // Bust cache for all pool accounts then force-fetch in parallel
     providerAccounts.forEach((acc) => { delete quotaCacheRef.current[acc.id]; });
@@ -690,7 +690,7 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
               {providerAccounts.length > 0 && (
                 <button
                   onClick={refreshAllQuotas}
-                  disabled={refreshingAllQuotas || !!refreshingQuotaId}
+                  disabled={refreshingAllQuotas || refreshingQuotaIds.size > 0}
                   className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[10px] font-medium text-text-main hover:border-border-alt hover:bg-surface-alt disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   title="Refresh quotas for all pool accounts, including disabled accounts"
                 >
@@ -818,17 +818,17 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
                       <div className="flex items-center gap-3 shrink-0">
                           <button
                             onClick={() => refreshAccountQuota(acc)}
-                            disabled={!!refreshingQuotaId || togglingAccountId === acc.id}
+                            disabled={refreshingQuotaIds.has(acc.id) || togglingAccountIds.has(acc.id)}
                             className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[10px] font-medium text-text-main hover:border-border-alt hover:bg-surface-alt disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             title="Force-refresh quota for this account"
                           >
                             <span className="material-symbols-outlined text-[12px]">refresh</span>
-                            {refreshingQuotaId === acc.id ? "…" : "Refresh Quota"}
+                            {refreshingQuotaIds.has(acc.id) ? "…" : "Refresh Quota"}
                           </button>
                         <Toggle
                           size="sm"
                           checked={acc.isActive !== false}
-                          disabled={!!refreshingQuotaId || togglingAccountId === acc.id}
+                          disabled={refreshingQuotaIds.has(acc.id) || togglingAccountIds.has(acc.id)}
                           onChange={(nextChecked) => toggleAccountActive(acc.id, nextChecked)}
                         />
                       </div>
