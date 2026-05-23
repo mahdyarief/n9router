@@ -513,6 +513,27 @@ async function startServer(apiKey, sudoPassword) {
     mitmLastStartTime = Date.now();
   }
 
+  // Platform-specific: set NODE_EXTRA_CA_CERTS for GUI apps
+  if (IS_MAC) {
+    // macOS: use launchctl for immediate effect on GUI apps
+    const rootCAPath = path.join(MITM_DIR, "rootCA.crt");
+    if (fs.existsSync(rootCAPath)) {
+      exec(`launchctl setenv NODE_EXTRA_CA_CERTS "${rootCAPath}"`, { windowsHide: true }, (e) => {
+        if (e) log(`[launchctl] Failed to set NODE_EXTRA_CA_CERTS: ${e.message}`);
+        else log(`[launchctl] NODE_EXTRA_CA_CERTS set to ${rootCAPath}`);
+      });
+    }
+  } else if (IS_WIN) {
+    // Windows: use setx for user-level env variable (new processes will see it)
+    const rootCAPath = path.join(MITM_DIR, "rootCA.crt");
+    if (fs.existsSync(rootCAPath)) {
+      exec(`setx NODE_EXTRA_CA_CERTS "${rootCAPath}"`, { windowsHide: true }, (e) => {
+        if (e) log(`[setx] Failed to set NODE_EXTRA_CA_CERTS: ${e.message}`);
+        else log(`[setx] NODE_EXTRA_CA_CERTS set for current user`);
+      });
+    }
+  }
+
   let startError = null;
   if (serverProcess) {
     serverProcess.stdout.on("data", (data) => {
@@ -624,6 +645,20 @@ async function stopServer(sudoPassword) {
   }
 
   try { fs.unlinkSync(PID_FILE); } catch { /* ignore */ }
+
+  // Unset NODE_EXTRA_CA_CERTS when stopping server
+  if (IS_MAC) {
+    exec(`launchctl unsetenv NODE_EXTRA_CA_CERTS`, { windowsHide: true }, (e) => {
+      if (e) log(`[launchctl] Failed to unset NODE_EXTRA_CA_CERTS: ${e.message}`);
+      else log(`[launchctl] NODE_EXTRA_CA_CERTS unset`);
+    });
+  } else if (IS_WIN) {
+    exec(`setx NODE_EXTRA_CA_CERTS ""`, { windowsHide: true }, (e) => {
+      if (e) log(`[setx] Failed to unset NODE_EXTRA_CA_CERTS: ${e.message}`);
+      else log(`[setx] NODE_EXTRA_CA_CERTS unset for current user`);
+    });
+  }
+
   await saveMitmSettings(false, null);
   mitmIsRestarting = false;
 
