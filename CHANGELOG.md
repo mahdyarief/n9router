@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.32 (2026-05-23)
+
+### Features
+
+- Add support for Antigravity AGYv2 by introducing path requirement checks and dedicated API routes
+- Add separate controls and endpoints to monitor and close Antigravity AGYv2 processes
+- Implement path requirement checks in `detectAntigravityInstallation` to accurately distinguish AGYv2 from legacy AGYv1 bundles
+
+### Improvements
+
+- Add comprehensive unit tests for AGYv2 layout detection and path requirements validation
+
 ## v0.4.31 (2026-05-23)
 
 ### Features
