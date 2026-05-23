@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.31 (2026-05-23)
+
+### Features
+
+- Add separate controls and endpoints to monitor and close standard Antigravity AGY and Antigravity IDE
+- Automatically set and unset the `NODE_EXTRA_CA_CERTS` environment variable on MITM server start/stop (macOS via `launchctl`, Windows via `setx`)
+
+### Improvements
+
+- Comment out verbose token-swap project rewrite logs in the MITM server
+
 ## v0.4.30 (2026-05-13)
 
 ### Features
