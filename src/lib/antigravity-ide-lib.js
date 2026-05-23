@@ -31,6 +31,31 @@ const TARGETS = {
       linux: ["antigravity", "agy"],
     },
   },
+  "antigravity-app-v2": {
+    id: "antigravity-app-v2",
+    route: "/api/antigravity-app-v2",
+    displayName: "Antigravity AGYv2",
+    logPrefix: "antigravity-app-v2",
+    installPaths: {
+      darwin: ["/Applications/Antigravity.app/Contents/MacOS/Antigravity"],
+      win32: [],
+      linux: [],
+    },
+    bundlePaths: {
+      darwin: ["/Applications/Antigravity.app"],
+    },
+    pathRequirements: {
+      darwin: {
+        all: ["/Applications/Antigravity.app/Contents/Resources/app.asar"],
+        none: ["/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity"],
+      },
+    },
+    processSearch: {
+      darwin: ["Antigravity.app"],
+      win32: [],
+      linux: [],
+    },
+  },
   "antigravity-ide": {
     id: "antigravity-ide",
     route: "/api/antigravity-ide",
@@ -62,11 +87,30 @@ function resolveEnvPath(p, env = process.env) {
   return p.replace(/%([^%]+)%/g, (_, v) => env[v] || "");
 }
 
+function matchesPathRequirements(target, platform, existsSync, env) {
+  const requirements = target.pathRequirements?.[platform];
+  if (!requirements) return true;
+
+  for (const tpl of requirements.all || []) {
+    if (!existsSync(resolveEnvPath(tpl, env))) return false;
+  }
+
+  for (const tpl of requirements.none || []) {
+    if (existsSync(resolveEnvPath(tpl, env))) return false;
+  }
+
+  return true;
+}
+
 export function detectAntigravityInstallation(target, {
   platform = PLATFORM,
   existsSync = fs.existsSync,
   env = process.env,
 } = {}) {
+  if (!matchesPathRequirements(target, platform, existsSync, env)) {
+    return { installed: false, binary: null };
+  }
+
   const installPaths = target.installPaths[platform] || [];
   for (const tpl of installPaths) {
     const resolved = resolveEnvPath(tpl, env);

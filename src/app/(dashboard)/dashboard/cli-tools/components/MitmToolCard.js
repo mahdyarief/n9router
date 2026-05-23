@@ -333,9 +333,16 @@ const ANTIGRAVITY_CLOSE_TARGETS = [
   {
     id: "antigravity-app",
     route: "/api/antigravity-app",
-    label: "Close AGY",
+    label: "Close AGYv1",
     title: "Close Antigravity AGY processes",
     stoppedTitle: "Antigravity AGY is stopped",
+  },
+  {
+    id: "antigravity-app-v2",
+    route: "/api/antigravity-app-v2",
+    label: "Close AGYv2",
+    title: "Close Antigravity AGYv2 processes",
+    stoppedTitle: "Antigravity AGYv2 is stopped",
   },
   {
     id: "antigravity-ide",
