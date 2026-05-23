@@ -150,7 +150,7 @@ export default function MitmToolCard({
           <div className="flex items-center gap-2 shrink-0">
             {showCollapsedHeaderActions && (
               <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                <IdeLaunchAction compact />
+                <AntigravityCloseActions compact />
                 <DnsToggleButton
                   dnsActive={dnsActive}
                   loading={loading}
@@ -178,9 +178,9 @@ export default function MitmToolCard({
               </div>
             )}
 
-            {/* Quick Action: Re-Launch IDE */}
+            {/* Quick Actions: close installed Antigravity apps */}
             {tool.id === "antigravity" && (
-              <IdeLaunchAction />
+              <AntigravityCloseActions />
             )}
 
             {/* Hosts */}
@@ -327,21 +327,48 @@ function DnsToggleButton({ dnsActive, loading, serverRunning, onClick, compact =
 }
 
 /**
- * Sub-component: Close Antigravity IDE
+ * Sub-component: Close installed Antigravity apps
  */
-function IdeLaunchAction({ compact = false }) {
+const ANTIGRAVITY_CLOSE_TARGETS = [
+  {
+    id: "antigravity-app",
+    route: "/api/antigravity-app",
+    label: "Close AGY",
+    title: "Close Antigravity AGY processes",
+    stoppedTitle: "Antigravity AGY is stopped",
+  },
+  {
+    id: "antigravity-ide",
+    route: "/api/antigravity-ide",
+    label: "Close AGY-IDE",
+    title: "Close Antigravity IDE processes",
+    stoppedTitle: "Antigravity IDE is stopped",
+  },
+];
+
+function AntigravityCloseActions({ compact = false }) {
+  return (
+    <div className={`flex flex-wrap items-center gap-2 ${compact ? "" : "px-1"}`}>
+      {ANTIGRAVITY_CLOSE_TARGETS.map((target) => (
+        <AntigravityCloseButton key={target.id} target={target} compact={compact} />
+      ))}
+    </div>
+  );
+}
+
+function AntigravityCloseButton({ target, compact = false }) {
   const [status, setStatus] = useState(null);
   const [closing, setClosing] = useState(false);
   const [result, setResult] = useState(null);
 
   const fetchStatus = useCallback(async ({ signal } = {}) => {
     try {
-      const res = await fetch("/api/antigravity-ide", { signal });
+      const res = await fetch(target.route, { signal });
       if (res.ok) setStatus(await res.json());
     } catch (error) {
       if (error?.name === "AbortError") return;
     }
-  }, []);
+  }, [target.route]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -363,7 +390,7 @@ function IdeLaunchAction({ compact = false }) {
     setClosing(true);
     setResult(null);
     try {
-      const res = await fetch("/api/antigravity-ide", {
+      const res = await fetch(target.route, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "close" }),
@@ -377,28 +404,30 @@ function IdeLaunchAction({ compact = false }) {
     setClosing(false);
   };
 
+  if (!status?.installed) return null;
+
   return (
-    <div className={`flex items-center gap-2 ${compact ? "" : "px-1"}`}>
+    <div className="flex items-center gap-2">
       <button
         type="button"
         onClick={handleClose}
-        disabled={closing || !status?.running}
+        disabled={closing || !status.running}
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-red-500/30 text-red-500 bg-red-500/5 hover:bg-red-500/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        title={!status?.running ? "Antigravity IDE is not running" : "Close all Antigravity IDE processes"}
+        title={status.running ? target.title : target.stoppedTitle}
       >
         <span className={`material-symbols-outlined text-[14px] ${closing ? "animate-spin" : ""}`}>
           {closing ? "progress_activity" : "close"}
         </span>
-        <span className={compact ? "hidden sm:inline" : ""}>{closing ? "Closing..." : "Close IDE"}</span>
+        <span className={compact ? "hidden sm:inline" : ""}>{closing ? "Closing..." : target.label}</span>
       </button>
 
       {/* Status indicator */}
       {status && (
-        <span className={`flex items-center gap-1 text-text-muted whitespace-nowrap ${compact ? "text-[11px]" : "text-[10px]"}`}>
+        <span className="flex items-center gap-1 text-[10px] text-text-muted whitespace-nowrap">
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${
-            !status.installed ? "bg-gray-400" : status.running ? "bg-green-500" : "bg-red-400"
+            status.running ? "bg-green-500" : "bg-red-400"
           }`} />
-          {!status.installed ? "Not installed" : status.running ? "Running" : "Stopped"}
+          <span className={compact ? "hidden xl:inline" : ""}>{status.running ? "Running" : "Stopped"}</span>
         </span>
       )}
 
