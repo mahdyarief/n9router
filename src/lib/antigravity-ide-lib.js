@@ -17,10 +17,39 @@ const TARGETS = {
       darwin: ["/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity"],
       win32: [
         "%LOCALAPPDATA%\\Programs\\Antigravity\\resources\\app\\bin\\antigravity.cmd",
+        "%LOCALAPPDATA%\\Programs\\AGY\\resources\\app\\bin\\agy.cmd",
         "%LOCALAPPDATA%\\Programs\\Antigravity\\Antigravity.exe",
+        "%LOCALAPPDATA%\\Programs\\AGY\\AGY.exe",
         "%ProgramFiles%\\Antigravity\\Antigravity.exe",
+        "%ProgramFiles%\\AGY\\AGY.exe",
       ],
       linux: [],
+    },
+    installCandidates: {
+      win32: [
+        { binary: "%LOCALAPPDATA%\\Programs\\Antigravity\\resources\\app\\bin\\antigravity.cmd" },
+        { binary: "%LOCALAPPDATA%\\Programs\\AGY\\resources\\app\\bin\\agy.cmd" },
+        {
+          binary: "%LOCALAPPDATA%\\Programs\\Antigravity\\Antigravity.exe",
+          all: ["%LOCALAPPDATA%\\Programs\\Antigravity\\resources\\app\\bin\\antigravity.cmd"],
+          none: ["%LOCALAPPDATA%\\Programs\\Antigravity\\resources\\app.asar"],
+        },
+        {
+          binary: "%LOCALAPPDATA%\\Programs\\AGY\\AGY.exe",
+          all: ["%LOCALAPPDATA%\\Programs\\AGY\\resources\\app\\bin\\agy.cmd"],
+          none: ["%LOCALAPPDATA%\\Programs\\AGY\\resources\\app.asar"],
+        },
+        {
+          binary: "%ProgramFiles%\\Antigravity\\Antigravity.exe",
+          all: ["%ProgramFiles%\\Antigravity\\resources\\app\\bin\\antigravity.cmd"],
+          none: ["%ProgramFiles%\\Antigravity\\resources\\app.asar"],
+        },
+        {
+          binary: "%ProgramFiles%\\AGY\\AGY.exe",
+          all: ["%ProgramFiles%\\AGY\\resources\\app\\bin\\agy.cmd"],
+          none: ["%ProgramFiles%\\AGY\\resources\\app.asar"],
+        },
+      ],
     },
     bundlePaths: {
       darwin: ["/Applications/Antigravity.app", "/Applications/AGY.app"],
@@ -38,8 +67,25 @@ const TARGETS = {
     logPrefix: "antigravity-app-v2",
     installPaths: {
       darwin: ["/Applications/Antigravity.app/Contents/MacOS/Antigravity"],
-      win32: [],
+      win32: [
+        "%LOCALAPPDATA%\\Programs\\Antigravity\\Antigravity.exe",
+        "%ProgramFiles%\\Antigravity\\Antigravity.exe",
+      ],
       linux: [],
+    },
+    installCandidates: {
+      win32: [
+        {
+          binary: "%LOCALAPPDATA%\\Programs\\Antigravity\\Antigravity.exe",
+          all: ["%LOCALAPPDATA%\\Programs\\Antigravity\\resources\\app.asar"],
+          none: ["%LOCALAPPDATA%\\Programs\\Antigravity\\resources\\app\\bin\\antigravity.cmd"],
+        },
+        {
+          binary: "%ProgramFiles%\\Antigravity\\Antigravity.exe",
+          all: ["%ProgramFiles%\\Antigravity\\resources\\app.asar"],
+          none: ["%ProgramFiles%\\Antigravity\\resources\\app\\bin\\antigravity.cmd"],
+        },
+      ],
     },
     bundlePaths: {
       darwin: ["/Applications/Antigravity.app"],
@@ -52,7 +98,7 @@ const TARGETS = {
     },
     processSearch: {
       darwin: ["Antigravity.app"],
-      win32: [],
+      win32: ["Antigravity.exe"],
       linux: [],
     },
   },
@@ -63,7 +109,12 @@ const TARGETS = {
     logPrefix: "antigravity-ide",
     installPaths: {
       darwin: ["/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide"],
-      win32: [],
+      win32: [
+        "%LOCALAPPDATA%\\Programs\\Antigravity IDE\\Antigravity IDE.exe",
+        "%LOCALAPPDATA%\\Programs\\Antigravity IDE\\antigravity-ide.exe",
+        "%ProgramFiles%\\Antigravity IDE\\Antigravity IDE.exe",
+        "%ProgramFiles%\\Antigravity IDE\\antigravity-ide.exe",
+      ],
       linux: [],
     },
     bundlePaths: {
@@ -71,7 +122,7 @@ const TARGETS = {
     },
     processSearch: {
       darwin: ["Antigravity IDE.app"],
-      win32: [],
+      win32: ["Antigravity IDE.exe", "antigravity-ide.exe"],
       linux: [],
     },
   },
@@ -91,11 +142,15 @@ function matchesPathRequirements(target, platform, existsSync, env) {
   const requirements = target.pathRequirements?.[platform];
   if (!requirements) return true;
 
-  for (const tpl of requirements.all || []) {
+  return matchesCandidateRequirements(requirements, existsSync, env);
+}
+
+function matchesCandidateRequirements(candidate, existsSync, env) {
+  for (const tpl of candidate.all || []) {
     if (!existsSync(resolveEnvPath(tpl, env))) return false;
   }
 
-  for (const tpl of requirements.none || []) {
+  for (const tpl of candidate.none || []) {
     if (existsSync(resolveEnvPath(tpl, env))) return false;
   }
 
@@ -108,6 +163,18 @@ export function detectAntigravityInstallation(target, {
   env = process.env,
 } = {}) {
   if (!matchesPathRequirements(target, platform, existsSync, env)) {
+    return { installed: false, binary: null };
+  }
+
+  const installCandidates = target.installCandidates?.[platform] || [];
+  for (const candidate of installCandidates) {
+    if (!matchesCandidateRequirements(candidate, existsSync, env)) continue;
+    const resolved = resolveEnvPath(candidate.binary, env);
+    if (resolved && existsSync(resolved)) {
+      return { installed: true, binary: resolved };
+    }
+  }
+  if (installCandidates.length > 0) {
     return { installed: false, binary: null };
   }
 
@@ -164,8 +231,10 @@ export function detectAntigravityProcesses(target) {
           const output = execSync(`tasklist /FI "IMAGENAME eq ${name}" /NH`, {
             encoding: "utf8", stdio: "pipe", timeout: 5000,
           });
-          if (!output.includes("No tasks") && output.includes(name.replace(".exe", ""))) {
-            for (const line of output.split("\n").filter(l => l.includes(name.replace(".exe", "")))) {
+          const lowerOutput = output.toLowerCase();
+          const lowerNeedle = name.replace(".exe", "").toLowerCase();
+          if (!lowerOutput.includes("no tasks") && lowerOutput.includes(lowerNeedle)) {
+            for (const line of output.split("\n").filter(l => l.toLowerCase().includes(lowerNeedle))) {
               const match = line.match(/\s+(\d+)\s/);
               if (match) pids.push(parseInt(match[1], 10));
             }
@@ -264,11 +333,20 @@ function killProcesses(target, pids) {
       }
     }
   } else if (PLATFORM === "win32") {
-    for (const name of (target.processSearch.win32 || [])) {
+    for (const pid of pids) {
       try {
-        execSync(`taskkill /F /IM ${name}`, { stdio: "pipe", timeout: 5000 });
+        execSync(`taskkill /F /T /PID ${pid}`, { stdio: "pipe", windowsHide: true, timeout: 5000 });
         killed++;
-      } catch { /* ignore */ }
+      } catch { /* already exited */ }
+    }
+
+    if (killed === 0) {
+      for (const name of (target.processSearch.win32 || [])) {
+        try {
+          execSync(`taskkill /F /T /IM "${name}"`, { stdio: "pipe", windowsHide: true, timeout: 5000 });
+          killed++;
+        } catch { /* ignore */ }
+      }
     }
   } else {
     for (const pid of pids) {
@@ -365,6 +443,13 @@ export async function handleAntigravityPost(targetId, request) {
           await waitUntilStopped();
           if (!detectAntigravityProcesses(target).running) break;
         }
+      }
+      if (detectAntigravityProcesses(target).running) {
+        return Response.json({
+          success: false,
+          error: `Failed to close ${target.displayName}`,
+          killed,
+        }, { status: 500 });
       }
       console.log(`[${target.logPrefix}] Closed ${killed} process(es)`);
       return Response.json({
