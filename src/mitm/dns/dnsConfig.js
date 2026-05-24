@@ -270,7 +270,7 @@ async function addDNSEntry(tool, sudoPassword) {
   try {
     log(`🌐 DNS ${tool}: enabling (${entriesToAdd.join(", ")})`);
     if (IS_WIN) {
-      const toAppend = entriesToAdd.map(h => `127.0.0.1 ${h}`).join("`r`n");
+      const toAppend = entriesToAdd.map(h => `127.0.0.1 ${h}`).join("\r\n");
       // Single elevated script: append to hosts + flush DNS (1 UAC popup, or zero if admin)
       const script = `
         Add-Content -LiteralPath ${quotePs(HOSTS_FILE)} -Value ${quotePs(toAppend)}
