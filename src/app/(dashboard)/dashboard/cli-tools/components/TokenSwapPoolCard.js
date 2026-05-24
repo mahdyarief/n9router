@@ -10,8 +10,9 @@ import {
   formatResetTimeDisplay,
 } from "@/app/(dashboard)/dashboard/usage/components/ProviderLimits/utils";
 
-// Model to highlight in the quota summary
-const HIGHLIGHT_MODEL = "claude-sonnet-4-6";
+// Models to highlight in the quota summary
+const SONNET_HIGHLIGHT_MODEL = "claude-sonnet-4-6";
+const FLASH_HIGHLIGHT_TERM = "flash";
 
 // Cache TTL: 2 minutes — avoid hammering the upstream API
 const QUOTA_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -32,6 +33,30 @@ function getQuotaBg(pct) {
   if (pct > 70) return "bg-green-500";
   if (pct >= 30) return "bg-yellow-500";
   return "bg-red-500";
+}
+
+function getQuotaPercentage(quota) {
+  if (!quota) return null;
+  if (quota.remainingPercentage !== undefined) {
+    return Math.round(quota.remainingPercentage);
+  }
+  if (quota.total > 0) {
+    return Math.round(((quota.total - quota.used) / quota.total) * 100);
+  }
+  return null;
+}
+
+function quotaMatchesTerm(quota, term) {
+  const needle = term.toLowerCase();
+  return (
+    quota.modelKey?.toLowerCase().includes(needle) ||
+    quota.name?.toLowerCase().includes(needle)
+  );
+}
+
+function getFutureResetAt(quota) {
+  if (!quota?.resetAt) return null;
+  return new Date(quota.resetAt).getTime() > Date.now() ? quota.resetAt : null;
 }
 
 function maskEmail(email) {
@@ -304,22 +329,22 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
     if (q.error) return { state: "error", error: q.error };
     if (!q.quotas || q.quotas.length === 0) return { state: "no-data" };
 
-    // Find highlight model, fallback to first quota with data
-    const highlight = q.quotas.find(m =>
-      m.modelKey?.includes(HIGHLIGHT_MODEL) || m.name?.toLowerCase().includes("opus")
-    ) || q.quotas[0];
+    const sonnetQuota = q.quotas.find(m =>
+      m.modelKey?.includes(SONNET_HIGHLIGHT_MODEL) || m.name?.toLowerCase().includes("sonnet")
+    ) || q.quotas.find(m => m.name?.toLowerCase().includes("opus")) || q.quotas[0];
+    const flashQuota = q.quotas.find(m => quotaMatchesTerm(m, FLASH_HIGHLIGHT_TERM));
+    const highlights = [sonnetQuota, flashQuota]
+      .filter(Boolean)
+      .filter((quota, index, list) => list.findIndex(item => item.modelKey === quota.modelKey && item.name === quota.name) === index)
+      .map((quota) => ({ quota, pct: getQuotaPercentage(quota) }))
+      .filter(({ pct }) => pct !== null);
 
-    if (!highlight) return { state: "no-data" };
+    if (highlights.length === 0) return { state: "no-data" };
 
-    const pct = highlight.remainingPercentage !== undefined
-      ? Math.round(highlight.remainingPercentage)
-      : highlight.total > 0
-        ? Math.round(((highlight.total - highlight.used) / highlight.total) * 100)
-        : null;
-
-    const highlightResetAt = highlight.resetAt && new Date(highlight.resetAt).getTime() > Date.now()
-      ? highlight.resetAt
-      : null;
+    const highlightResetAt = highlights
+      .map(({ quota }) => getFutureResetAt(quota))
+      .filter(Boolean)
+      .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0] || null;
 
     const nextResetAt = highlightResetAt || [...q.quotas]
       .map((quota) => quota.resetAt)
@@ -328,10 +353,9 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
       .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0] || null;
 
     return {
-      state: pct === null ? "no-data" : "ready",
-      highlight,
+      state: "ready",
+      highlights,
       accountType: q.accountType || null,
-      pct,
       nextResetAt,
       resetCountdown: formatResetTime(nextResetAt),
       resetDisplay: formatResetTimeDisplay(nextResetAt),
@@ -445,15 +469,24 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
       return <span className="text-[10px] text-text-muted">No quota data</span>;
     }
 
-    const { highlight, pct, resetCountdown, resetDisplay } = meta;
+    const { highlights, resetCountdown, resetDisplay } = meta;
     return (
       <div className="flex flex-col gap-1.5 min-w-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[10px] text-text-muted truncate">{highlight.name}</span>
-          <div className="flex-1 h-1.5 rounded-full bg-surface-alt overflow-hidden min-w-[56px]">
-            <div className={`h-full rounded-full ${getQuotaBg(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-          </div>
-          <span className={`text-[10px] font-medium shrink-0 ${getQuotaColor(pct)}`}>{pct}%</span>
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+          {highlights.map(({ quota, pct }) => (
+            <div
+              key={`${quota.modelKey || quota.name}-${quota.name}`}
+              className="min-w-0 rounded-md border border-border/70 bg-surface/60 px-2 py-1"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-[10px] text-text-muted truncate">{quota.name}</span>
+                <span className={`text-[10px] font-medium shrink-0 ${getQuotaColor(pct)}`}>{pct}%</span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full bg-surface-alt overflow-hidden">
+                <div className={`h-full rounded-full ${getQuotaBg(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+              </div>
+            </div>
+          ))}
         </div>
         {resetCountdown !== "-" && resetDisplay ? (
           <div className="text-[10px] text-text-muted">
