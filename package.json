@@ -33,11 +33,11 @@
   ],
   "scripts": {
     "dev": "next dev --webpack --port 20128",
-    "build": "NODE_ENV=production next build --webpack",
+    "build": "cross-env NODE_ENV=production next build --webpack",
     "postbuild": "cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/ && cp -r open-sse/. .next/standalone/open-sse/ && cp -r open-sse/. .next/open-sse/",
     "start": "NODE_ENV=production next start",
     "dev:bun": "bun --bun next dev --webpack --port 20128",
-    "build:bun": "NODE_ENV=production bun --bun next build --webpack",
+    "build:bun": "cross-env NODE_ENV=production bun --bun next build --webpack",
     "start:bun": "NODE_ENV=production bun ./.next/standalone/server.js",
     "postinstall": "node hooks/postinstall.js",
     "publish:npm:local": "./scripts/publish-npm.sh --local",
@@ -82,6 +82,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
+    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "postcss": "^8.5.6",
