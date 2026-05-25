@@ -17,7 +17,7 @@ const URL_PATTERNS = {
 
 // Synonym map: rawModel from request → canonical alias key in mitmAlias DB
 const MODEL_SYNONYMS = {
-  antigravity: { "gemini-default": "gemini-3-flash" },
+  antigravity: { "gemini-default": "gemini-3.5-flash-low" },
 };
 
 // URL substrings whose request/response should NOT be dumped to file (telemetry, polling, empty)

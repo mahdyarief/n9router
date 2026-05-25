@@ -383,11 +383,13 @@ async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptio
     if (data.models) {
       // Filter only recommended/important models (must match PROVIDER_MODELS ag ids)
       const importantModels = [
-        'claude-opus-4-6-thinking',
-        'claude-sonnet-4-6',
-        'gemini-3.1-pro-high',
+        'gemini-3.5-flash-low',
+        'gemini-3-flash-agent',
+        'gemini-3.5-flash-extra-low',
         'gemini-3.1-pro-low',
-        'gemini-3-flash',
+        'gemini-pro-agent',
+        'claude-sonnet-4-6',
+        'claude-opus-4-6-thinking',
         'gpt-oss-120b-medium',
       ];
 

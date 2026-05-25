@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.34 (2026-05-25)
+
+### Improvements
+
+- Update Antigravity model IDs and display labels from the latest MITM config response
+- Align Antigravity MITM default models, model aliases, and quota ordering with the latest recommended agent models
+- Map the Antigravity `gemini-default` MITM synonym to `gemini-3.5-flash-low`
+
 ## v0.4.32 (2026-05-23)
 
 ### Features
