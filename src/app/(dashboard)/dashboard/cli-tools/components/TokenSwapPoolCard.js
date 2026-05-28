@@ -81,6 +81,7 @@ function getAccountDisplay(acc, maskEmails) {
 function getAccountTypeBadgeVariant(accountType) {
   if (accountType === "Ultra") return "warning";
   if (accountType === "Pro") return "primary";
+  if (accountType === "Plus") return "success";
   if (accountType === "Free") return "info";
   return "default";
 }
@@ -469,33 +470,38 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
       return <span className="text-[10px] text-text-muted">No quota data</span>;
     }
 
-    const { highlights, resetCountdown, resetDisplay } = meta;
+    const { highlights } = meta;
     return (
       <div className="flex flex-col gap-1.5 min-w-0">
         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-          {highlights.map(({ quota, pct }) => (
-            <div
-              key={`${quota.modelKey || quota.name}-${quota.name}`}
-              className="min-w-0 rounded-md border border-border/70 bg-surface/60 px-2 py-1"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-[10px] text-text-muted truncate">{quota.name}</span>
-                <span className={`text-[10px] font-medium shrink-0 ${getQuotaColor(pct)}`}>{pct}%</span>
+          {highlights.map(({ quota, pct }) => {
+            const modelResetAt = getFutureResetAt(quota);
+            const modelResetCountdown = formatResetTime(modelResetAt);
+            const modelResetDisplay = formatResetTimeDisplay(modelResetAt);
+            return (
+              <div
+                key={`${quota.modelKey || quota.name}-${quota.name}`}
+                className="min-w-0 rounded-md border border-border/70 bg-surface/60 px-2 py-1"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[10px] text-text-muted truncate">{quota.name}</span>
+                  <span className={`text-[10px] font-medium shrink-0 ${getQuotaColor(pct)}`}>{pct}%</span>
+                </div>
+                <div className="mt-1 h-1.5 rounded-full bg-surface-alt overflow-hidden">
+                  <div className={`h-full rounded-full ${getQuotaBg(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                </div>
+                {modelResetCountdown !== "-" && modelResetDisplay ? (
+                  <div className="mt-1 text-[9px] text-text-muted/70 truncate">
+                    ↺ <span className="text-text-muted">{modelResetCountdown}</span>
+                    <span className="opacity-60"> · {modelResetDisplay}</span>
+                  </div>
+                ) : (
+                  <div className="mt-1 text-[9px] text-text-muted/50">Reset unavailable</div>
+                )}
               </div>
-              <div className="mt-1 h-1.5 rounded-full bg-surface-alt overflow-hidden">
-                <div className={`h-full rounded-full ${getQuotaBg(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-        {resetCountdown !== "-" && resetDisplay ? (
-          <div className="text-[10px] text-text-muted">
-            Reset in <span className="text-text-main">{resetCountdown}</span>
-            <span className="text-text-muted/70"> • {resetDisplay}</span>
-          </div>
-        ) : (
-          <div className="text-[10px] text-text-muted">Reset time unavailable</div>
-        )}
       </div>
     );
   };

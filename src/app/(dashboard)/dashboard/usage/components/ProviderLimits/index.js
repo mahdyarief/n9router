@@ -7,8 +7,9 @@ import Toggle from "@/shared/components/Toggle";
 import { parseQuotaData, calculatePercentage } from "./utils";
 import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
-import { EditConnectionModal } from "@/shared/components";
+import { EditConnectionModal, Badge } from "@/shared/components";
 import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+import { inferAntigravityAccountType, normalizeAntigravityAccountType } from "@/lib/antigravity/accountType";
 
 const REFRESH_INTERVAL_MS = 60000; // 60 seconds
 
@@ -566,6 +567,10 @@ export default function ProviderLimits() {
           const isInactive = conn.isActive === false;
           const rowBusy = deletingId === conn.id || togglingId === conn.id;
 
+          const accountType = conn.provider === "antigravity"
+            ? (inferAntigravityAccountType(quota?.raw) || normalizeAntigravityAccountType(conn.accountType))
+            : null;
+
           return (
             <Card
               key={conn.id}
@@ -586,10 +591,26 @@ export default function ProviderLimits() {
                         }
                       />
                     </div>
-                    <div className="min-w-0">
-                      <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
-                        {conn.provider}
-                      </h3>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
+                          {conn.provider}
+                        </h3>
+                        {conn.provider === "antigravity" && accountType && (
+                          <Badge
+                            variant={
+                              accountType === "Ultra" ? "warning" :
+                              accountType === "Pro" ? "primary" :
+                              accountType === "Plus" ? "success" :
+                              accountType === "Free" ? "info" : "default"
+                            }
+                            size="sm"
+                            className="text-[9px] px-1.5 py-0.5 shrink-0 font-bold uppercase"
+                          >
+                            {accountType}
+                          </Badge>
+                        )}
+                      </div>
                       {(() => {
                         const isEmail = (v) => typeof v === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
                         const label = isEmail(conn.email) ? conn.email : conn.name;

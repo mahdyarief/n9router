@@ -8,9 +8,10 @@ import QuotaProgressBar from "./QuotaProgressBar";
 import { calculatePercentage } from "./utils";
 
 const planVariants = {
-  free: "default",
+  free: "info",
+  plus: "success",
   pro: "primary",
-  ultra: "success",
+  ultra: "warning",
   enterprise: "info",
 };
 

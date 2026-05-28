@@ -332,87 +332,121 @@ async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptio
     // Fetch subscription info once — reuse for both projectId and plan
     const subscriptionInfo = await getAntigravitySubscriptionInfo(accessToken, proxyOptions);
     const projectId = subscriptionInfo?.cloudaicompanionProject || null;
+    const subscriptionTier = subscriptionInfo?.subscriptionTier || "Unknown";
 
-    // Fetch quota data with timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    const endpoints = [
+      "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
+      "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+      "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+    ];
 
-    let response;
-    try {
-      response = await proxyAwareFetch(ANTIGRAVITY_CONFIG.quotaApiUrl, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${accessToken}`,
-          "User-Agent": ANTIGRAVITY_CONFIG.userAgent,
-          "Content-Type": "application/json",
-          "X-Client-Name": "antigravity",
-          "X-Client-Version": "1.107.0",
-          "x-request-source": "local", // MITM bypass
-        },
-        body: JSON.stringify({
-          ...(projectId ? { project: projectId } : {})
-        }),
-        signal: controller.signal,
-      }, proxyOptions);
-    } finally {
-      clearTimeout(timeoutId);
+    let response = null;
+    let responseData = null;
+    let fetchError = null;
+
+    for (const url of endpoints) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      let payload = projectId ? { project: projectId } : {};
+
+      try {
+        let res = await proxyAwareFetch(url, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "User-Agent": ANTIGRAVITY_CONFIG.userAgent,
+            "Content-Type": "application/json",
+            "X-Client-Name": "antigravity",
+            "X-Client-Version": "1.107.0",
+            "x-request-source": "local",
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        }, proxyOptions);
+
+        // 403 Forbidden check: if payload has project, retry without project ID on the SAME endpoint
+        if (res.status === 403 && payload.project) {
+          console.warn(`[Antigravity Quota] 403 Forbidden with project ID on ${url}, retrying without project ID...`);
+          res = await proxyAwareFetch(url, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${accessToken}`,
+              "User-Agent": ANTIGRAVITY_CONFIG.userAgent,
+              "Content-Type": "application/json",
+              "X-Client-Name": "antigravity",
+              "X-Client-Version": "1.107.0",
+              "x-request-source": "local",
+            },
+            body: JSON.stringify({}),
+            signal: controller.signal,
+          }, proxyOptions);
+        }
+
+        if (res.status === 403) {
+          return {
+            plan: subscriptionTier,
+            message: "Antigravity quota API access forbidden.",
+            isForbidden: true,
+            quotas: {}
+          };
+        }
+
+        if (res.status === 401) {
+          return {
+            plan: subscriptionTier,
+            message: "Antigravity quota API authentication expired.",
+            isExpired: true,
+            quotas: {}
+          };
+        }
+
+        if (res.ok) {
+          response = res;
+          responseData = await res.json();
+          break; // Succeeded! Break the endpoints loop
+        } else {
+          const errText = await res.text();
+          fetchError = new Error(`HTTP ${res.status}: ${errText}`);
+        }
+      } catch (err) {
+        fetchError = err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
     }
 
-    if (response.status === 403) {
-      return {
-        message: "Antigravity quota API access forbidden. Chat may still work.",
-        quotas: {}
-      };
+    if (!response || !responseData) {
+      throw fetchError || new Error("Failed to fetch antigravity quota from all endpoints");
     }
 
-    if (response.status === 401) {
-      return {
-        message: "Antigravity quota API authentication expired. Chat may still work.",
-        quotas: {}
-      };
-    }
-
-    if (!response.ok) {
-      throw new Error(`Antigravity API error: ${response.status}`);
-    }
-
-    const data = await response.json();
     const quotas = {};
-
-    // Parse model quotas (inspired by vscode-antigravity-cockpit)
-    if (data.models) {
-      // Filter only recommended/important models (must match PROVIDER_MODELS ag ids)
-      const importantModels = [
-        'gemini-3.5-flash-low',
-        'gemini-3-flash-agent',
-        'gemini-3.5-flash-extra-low',
-        'gemini-3.1-pro-low',
-        'gemini-pro-agent',
-        'claude-sonnet-4-6',
-        'claude-opus-4-6-thinking',
-        'gpt-oss-120b-medium',
-      ];
-
-      for (const [modelKey, info] of Object.entries(data.models)) {
-        // Skip models without quota info
+    if (responseData.models) {
+      // Like Antigravity-Manager, accept any model whose key starts with gemini, claude, gpt, image, or imagen
+      for (const [modelKey, info] of Object.entries(responseData.models)) {
         if (!info.quotaInfo) {
           continue;
         }
 
-        // Skip internal models and non-important models
-        if (info.isInternal || !importantModels.includes(modelKey)) {
+        const matchesTarget =
+          modelKey === "claude-opus-4-6-thinking" ||
+          modelKey === "claude-sonnet-4-6" ||
+          modelKey.startsWith("gemini-3.1-pro-") ||
+          modelKey === "gemini-3.1-pro" ||
+          modelKey.startsWith("gemini-3.5-") ||
+          modelKey === "gemini-3.5"||
+          modelKey === "gemini-3-flash-agent";
+
+        if (!matchesTarget) {
           continue;
         }
 
-        const remainingFraction = info.quotaInfo.remainingFraction || 0;
+        const remainingFraction = info.quotaInfo.remainingFraction != null ? info.quotaInfo.remainingFraction : 0;
         const remainingPercentage = remainingFraction * 100;
-
-        // Convert percentage to used/total for UI compatibility
-        const total = 1000; // Normalized base
+        const total = 1000;
         const remaining = Math.round(total * remainingFraction);
         const used = total - remaining;
 
-        // Use modelKey as key (matches PROVIDER_MODELS id)
         quotas[modelKey] = {
           used,
           total,
@@ -425,12 +459,12 @@ async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptio
     }
 
     return {
-      plan: subscriptionInfo?.currentTier?.name || "Unknown",
+      plan: subscriptionTier,
       quotas,
       subscriptionInfo,
     };
   } catch (error) {
-    console.error("[Antigravity Usage] Error:", error.message, error.cause);
+    console.error("[Antigravity Usage] Error:", error.message);
     return { message: `Antigravity error: ${error.message}` };
   }
 }
@@ -448,32 +482,96 @@ async function getAntigravityProjectId(accessToken) {
 }
 
 /**
+ * Check whether a tier string contains a recognizable keyword (ultra/pro/plus/free).
+ * Used to detect free accounts where currentTier.name is a generic label like "Antigravity".
+ */
+function isTierNormalizeable(value) {
+  if (!value) return false;
+  const lower = String(value).toLowerCase();
+  return lower.includes("ultra") || lower.includes("pro") || lower.includes("plus") || lower.includes("free") || lower.includes("restricted");
+}
+
+/**
  * Get Antigravity subscription info
  */
 async function getAntigravitySubscriptionInfo(accessToken, proxyOptions = null) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
-  try {
-    const response = await proxyAwareFetch(ANTIGRAVITY_CONFIG.loadProjectApiUrl, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "User-Agent": ANTIGRAVITY_CONFIG.userAgent,
-        "Content-Type": "application/json",
-        "x-request-source": "local", // MITM bypass
-      },
-      body: JSON.stringify({ metadata: CLIENT_METADATA, mode: 1 }),
-      signal: controller.signal,
-    }, proxyOptions);
+  const urls = [
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+    "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+  ];
 
-    if (!response.ok) return null;
-    return await response.json();
-  } catch (error) {
-    console.error("[Antigravity Subscription] Error:", error.message);
-    return null;
-  } finally {
-    clearTimeout(timeoutId);
+  for (const url of urls) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await proxyAwareFetch(url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "User-Agent": ANTIGRAVITY_CONFIG.userAgent,
+          "Content-Type": "application/json",
+          "x-request-source": "local",
+        },
+        body: JSON.stringify({ metadata: CLIENT_METADATA, mode: 1 }),
+        signal: controller.signal,
+      }, proxyOptions);
+
+      if (response.ok) {
+        const data = await response.json();
+        const paidTier = data.paidTier;
+        const currentTier = data.currentTier;
+        const allowedTiers = data.allowedTiers;
+        const ineligibleTiers = data.ineligibleTiers;
+
+        let subscriptionTier = (paidTier?.name || paidTier?.id) || null;
+        const isIneligible = Array.isArray(ineligibleTiers) && ineligibleTiers.length > 0;
+
+        if (!subscriptionTier) {
+          if (!isIneligible) {
+            subscriptionTier = (currentTier?.name || currentTier?.id) || null;
+          } else {
+            if (Array.isArray(allowedTiers)) {
+              const defaultTier = allowedTiers.find(t => t.isDefault === true);
+              if (defaultTier) {
+                const nameOrId = defaultTier.name || defaultTier.id;
+                if (nameOrId) {
+                  subscriptionTier = `${nameOrId} (Restricted)`;
+                }
+              }
+            }
+          }
+        }
+
+        // If subscriptionTier resolved to a value that doesn't map to a known tier
+        // (e.g. free accounts return currentTier.name="Antigravity" which is unrecognized),
+        // fall back to currentTier.id (free accounts have id="free-tier") or force "Free".
+        // This mirrors Antigravity-Manager's catch-all: anything not "ultra"/"pro" → FREE.
+        if (subscriptionTier && !isTierNormalizeable(subscriptionTier)) {
+          const idFallback = currentTier?.id;
+          if (idFallback && isTierNormalizeable(idFallback)) {
+            subscriptionTier = idFallback; // e.g. "free-tier" → will normalize to "Free"
+          } else if (!paidTier) {
+            // No paid tier and name didn't normalize → treat as Free (catch-all like Antigravity-Manager)
+            subscriptionTier = "Free";
+          }
+        }
+
+        // If still no tier resolved but we have currentTier info → Free
+        if (!subscriptionTier && currentTier && !isIneligible) {
+          subscriptionTier = "Free";
+        }
+        
+        data.subscriptionTier = subscriptionTier;
+        return data;
+      }
+    } catch (error) {
+      console.error(`[Antigravity Subscription] Error fetching from ${url}:`, error.message);
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
+  return null;
 }
 
 /**

@@ -1,4 +1,4 @@
-export const ANTIGRAVITY_ACCOUNT_TYPES = ["Free", "Pro", "Ultra"];
+export const ANTIGRAVITY_ACCOUNT_TYPES = ["Free", "Plus", "Pro", "Ultra"];
 
 export const ANTIGRAVITY_ACCOUNT_TYPE_OPTIONS = ANTIGRAVITY_ACCOUNT_TYPES.map((value) => ({
   value,
@@ -15,6 +15,7 @@ export function normalizeAntigravityAccountType(input) {
 
   if (normalized.includes("ultra")) return "Ultra";
   if (normalized.includes("pro")) return "Pro";
+  if (normalized.includes("plus")) return "Plus";
   if (normalized.includes("free")) return "Free";
 
   return null;

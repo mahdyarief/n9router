@@ -7,12 +7,15 @@ import Input from "@/shared/components/Input";
 import Button from "@/shared/components/Button";
 import Badge from "@/shared/components/Badge";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import Select from "./Select";
+import { ANTIGRAVITY_ACCOUNT_TYPE_OPTIONS } from "@/lib/antigravity/accountType";
 
 export default function EditConnectionModal({ isOpen, connection, proxyPools, onSave, onClose }) {
   const [formData, setFormData] = useState({
     name: "",
     priority: 1,
     apiKey: "",
+    accountType: "",
   });
   const [azureData, setAzureData] = useState({
     azureEndpoint: "",
@@ -33,6 +36,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         name: connection.name || "",
         priority: connection.priority || 1,
         apiKey: "",
+        accountType: connection.accountType || "",
       });
       // Load Azure-specific data if present
       if (connection.provider === "azure" && connection.providerSpecificData) {
@@ -105,6 +109,9 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         name: formData.name,
         priority: formData.priority,
       };
+      if (connection.provider === "antigravity") {
+        updates.accountType = formData.accountType || null;
+      }
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
         let isValid = validationResult === "success";
@@ -180,6 +187,18 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value, 10) || 1 })}
         />
+
+        {connection?.provider === "antigravity" && (
+          <Select
+            label="Account Tier"
+            value={formData.accountType}
+            onChange={(e) => setFormData({ ...formData, accountType: e.target.value })}
+            options={[
+              { value: "", label: "None" },
+              ...ANTIGRAVITY_ACCOUNT_TYPE_OPTIONS
+            ]}
+          />
+        )}
 
         {!isOAuth && (
           <>

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.35 (2026-05-28)
+
+### Features
+
+- Display Antigravity account tier badge (Free, Plus, Pro, Ultra) in the Quota Tracker dashboard connection card
+
+### Improvements
+
+- Filter and limit Antigravity model quotas to specifically keep only: `claude-opus-4-6-thinking`, `claude-sonnet-4-6`, `gemini-3.1-pro-*`, and `gemini-3.5-*`
+- Add `"restricted"` check to `isTierNormalizeable` helper in the Open-SSE usage service, resolving a pre-existing unit test failure and correctly badge restricted subscription plans
+
 ## v0.4.34 (2026-05-25)
 
 ### Improvements

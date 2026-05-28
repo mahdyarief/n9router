@@ -456,7 +456,7 @@ export async function createProviderConnection(data) {
     "accessToken", "refreshToken", "expiresAt", "tokenType",
     "scope", "idToken", "projectId", "apiKey", "testStatus",
     "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "expiresIn", "errorCode",
-    "consecutiveUseCount"
+    "consecutiveUseCount", "accountType"
   ];
 
   for (const field of optionalFields) {
@@ -722,7 +722,7 @@ export async function cleanupProviderConnections() {
     "accessToken", "refreshToken", "expiresAt", "tokenType",
     "scope", "idToken", "projectId", "apiKey", "testStatus",
     "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "expiresIn",
-    "consecutiveUseCount"
+    "consecutiveUseCount", "accountType"
   ];
 
   let cleaned = 0;

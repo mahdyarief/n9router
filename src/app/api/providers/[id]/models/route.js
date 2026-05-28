@@ -412,6 +412,142 @@ export async function GET(request, { params }) {
       });
     }
 
+    if (connection.provider === "antigravity") {
+      const { accessToken, refreshToken } = connection;
+      if (!accessToken) {
+        return NextResponse.json({ error: "No valid token found" }, { status: 401 });
+      }
+
+      // Fetch project ID using loadCodeAssist endpoints with fallback
+      const fetchProjectId = async (token) => {
+        const loadCodeAssistUrls = [
+          "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
+          "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+          "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+        ];
+        for (const url of loadCodeAssistUrls) {
+          try {
+            const res = await fetch(url, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+                "User-Agent": "vscode/1.X.X (Antigravity/4.2.1)"
+              },
+              body: JSON.stringify({ metadata: { ideType: "ANTIGRAVITY" } })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              return data?.cloudaicompanionProject || null;
+            }
+          } catch (e) {
+            console.error(`Failed to fetch project ID from ${url}:`, e);
+          }
+        }
+        return null;
+      };
+
+      const fetchModels = async (token, projectId) => {
+        const fetchModelsUrls = [
+          "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
+          "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+          "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+        ];
+
+        let lastResponse = null;
+        for (const url of fetchModelsUrls) {
+          let payload = projectId ? { project: projectId } : {};
+          try {
+            let res = await fetch(url, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+                "User-Agent": "vscode/1.X.X (Antigravity/4.2.1)"
+              },
+              body: JSON.stringify(payload)
+            });
+
+            // 403 retry without project ID
+            if (res.status === 403 && payload.project) {
+              res = await fetch(url, {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${token}`,
+                  "Content-Type": "application/json",
+                  "User-Agent": "vscode/1.X.X (Antigravity/4.2.1)"
+                },
+                body: JSON.stringify({})
+              });
+            }
+
+            if (res.ok) {
+              return res;
+            }
+            lastResponse = res;
+          } catch (e) {
+            console.error(`Failed to fetch models from ${url}:`, e);
+          }
+        }
+        return lastResponse;
+      };
+
+      let warning;
+      try {
+        let currentToken = accessToken;
+        let projectId = connection.projectId || connection.providerSpecificData?.projectId;
+        if (!projectId) {
+          projectId = await fetchProjectId(currentToken);
+        }
+
+        let response = await fetchModels(currentToken, projectId);
+
+        // Attempt token refresh on 401/403 when refresh token exists
+        if (response && !response.ok && (response.status === 401 || response.status === 403) && refreshToken) {
+          const refreshed = await refreshGoogleToken(refreshToken, GEMINI_CONFIG.clientId, GEMINI_CONFIG.clientSecret);
+          if (refreshed?.accessToken) {
+            await updateProviderCredentials(connection.id, {
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken,
+              expiresIn: refreshed.expiresIn,
+            });
+            currentToken = refreshed.accessToken;
+            if (!projectId) {
+              projectId = await fetchProjectId(currentToken);
+            }
+            response = await fetchModels(currentToken, projectId);
+          }
+        }
+
+        if (response && response.ok) {
+          const data = await response.json();
+          const models = parseGeminiCliModels(data);
+          if (models.length > 0) {
+            return NextResponse.json({
+              provider: connection.provider,
+              connectionId: connection.id,
+              models
+            });
+          }
+        } else {
+          const errorText = response ? await response.text() : "Network error";
+          warning = `Failed to fetch Antigravity models: ${response ? response.status : 'Error'} ${errorText}`;
+          console.log("Failed to fetch Antigravity models dynamically, falling back to static:", errorText);
+        }
+      } catch (error) {
+        warning = `Failed to fetch Antigravity models: ${error.message}`;
+        console.log("Failed to fetch Antigravity models dynamically, falling back to static:", error.message);
+      }
+
+      // Return empty dynamic list so UI falls back to static provider models.
+      return NextResponse.json({
+        provider: connection.provider,
+        connectionId: connection.id,
+        models: [],
+        warning,
+      });
+    }
+
     if (connection.provider === "ollama-local") {
       const url = `${resolveOllamaLocalHost(connection)}/api/tags`;
       const response = await fetch(url, {
