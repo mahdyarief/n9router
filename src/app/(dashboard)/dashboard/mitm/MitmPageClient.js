@@ -88,6 +88,14 @@ export default function MitmPageClient() {
         <h1 className="text-xl font-semibold text-text-main sm:text-2xl">MITM</h1>
         <p className="text-sm text-text-muted">Route supported IDE traffic through 9Router with local DNS interception.</p>
       </div>
+
+      <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+        <span className="material-symbols-outlined text-[16px] text-yellow-500 mt-0.5 shrink-0">warning</span>
+        <p className="text-xs text-red-600 dark:text-yellow-400 leading-relaxed">
+          ⚠️ MITM intercepts HTTPS traffic of IDE tools (Antigravity, GitHub Copilot, Kiro) via local CA to redirect requests to your providers. May violate ToS → account ban. Use at your own risk.
+        </p>
+      </div>
+
       {/* MITM Server Card */}
       <MitmServerCard
         apiKeys={apiKeys}

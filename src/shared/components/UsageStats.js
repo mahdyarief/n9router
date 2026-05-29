@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { FREE_PROVIDERS } from "@/shared/constants/providers";
 import Badge from "./Badge";
@@ -181,13 +181,14 @@ const TABLE_OPTIONS = [
 ];
 
 const PERIODS = [
+  { value: "today", label: "Today" },
   { value: "24h", label: "24h" },
   { value: "7d", label: "7D" },
   { value: "30d", label: "30D" },
   { value: "60d", label: "60D" },
 ];
 
-export default function UsageStats() {
+export default function UsageStats({ period: periodProp, setPeriod: setPeriodProp, hidePeriodSelector = false } = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -200,7 +201,10 @@ export default function UsageStats() {
   const [tableView, setTableView] = useState("model");
   const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
-  const [period, setPeriod] = useState("7d");
+  const [periodLocal, setPeriodLocal] = useState("7d");
+  const isInitialLoad = useRef(true);
+  const period = periodProp ?? periodLocal;
+  const setPeriod = setPeriodProp ?? setPeriodLocal;
 
   // Fetch connected providers once, deduplicate by provider type
   // Always include noAuth free providers (e.g. opencode) regardless of connections
@@ -225,6 +229,14 @@ export default function UsageStats() {
   // Fetch filtered stats via REST when period changes
   useEffect(() => {
     const controller = new AbortController();
+
+    // First load: show full spinner; subsequent: show subtle fetching indicator
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      setLoading(true);
+    } else {
+      setFetching(true);
+    }
 
     fetch(`/api/usage/stats?period=${period}`, { signal: controller.signal })
       .then((r) => r.ok ? r.json() : null)
@@ -287,7 +299,7 @@ export default function UsageStats() {
     if (nextPeriod === period) return;
     setFetching(true);
     setPeriod(nextPeriod);
-  }, [period]);
+  }, [period, setPeriod]);
 
   // Compute active table data
   const activeTableConfig = useMemo(() => {
@@ -416,24 +428,26 @@ export default function UsageStats() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      {/* Period selector */}
-      <div className="flex w-full items-center gap-2 sm:w-auto sm:self-end">
-        <div className="grid flex-1 grid-cols-4 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex sm:flex-none">
-          {PERIODS.map((p) => (
-            <button
-              key={p.value}
-              onClick={() => handlePeriodChange(p.value)}
-              disabled={fetching}
-              className={`rounded-md px-3 py-1 text-sm font-medium transition-colors ${period === p.value ? "bg-primary text-white shadow-sm" : "text-text-muted hover:bg-bg-hover hover:text-text"}`}
-            >
-              {p.label}
-            </button>
-          ))}
+      {/* Period selector (hidden when controlled by parent) */}
+      {!hidePeriodSelector && (
+        <div className="flex w-full items-center gap-2 sm:w-auto sm:self-end">
+          <div className="grid flex-1 grid-cols-5 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex sm:flex-none">
+            {PERIODS.map((p) => (
+              <button
+                key={p.value}
+                onClick={() => handlePeriodChange(p.value)}
+                disabled={fetching}
+                className={`rounded-md px-3 py-1 text-sm font-medium transition-colors ${period === p.value ? "bg-primary text-white shadow-sm" : "text-text-muted hover:bg-bg-hover hover:text-text"}`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          {fetching && (
+            <span className="material-symbols-outlined text-[16px] text-text-muted animate-spin">progress_activity</span>
+          )}
         </div>
-        {fetching && (
-          <span className="material-symbols-outlined text-[16px] text-text-muted animate-spin">progress_activity</span>
-        )}
-      </div>
+      )}
 
       {/* Overview cards */}
       {loading ? spinner : <OverviewCards stats={stats} />}
@@ -460,7 +474,8 @@ export default function UsageStats() {
           <select
             value={tableView}
             onChange={(e) => setTableView(e.target.value)}
-            className="w-full rounded-lg border border-border bg-bg-subtle px-3 py-1.5 text-sm font-medium text-text focus:outline-none focus:ring-2 focus:ring-primary/50 sm:w-auto"
+            className="w-full rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-text-main focus:outline-none focus:ring-2 focus:ring-primary/50 sm:w-auto"
+            style={{ colorScheme: 'auto' }}
           >
             {TABLE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
