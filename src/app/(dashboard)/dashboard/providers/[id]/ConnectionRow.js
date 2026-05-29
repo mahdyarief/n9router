@@ -52,6 +52,7 @@ export default function ConnectionRow({
   onUpdateProxy,
   onEdit,
   onDelete,
+  oneByOneStatus = null,
 }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
@@ -129,17 +130,15 @@ export default function ConnectionRow({
     }
   };
 
+  const rowAuthType = connection.authType || (isOAuth ? "oauth" : "apikey");
+  const isOAuthConnection = rowAuthType === "oauth";
+  const isCookieConnection = rowAuthType === "cookie";
+  const authIcon = isCookieConnection ? "cookie" : isOAuthConnection ? "lock" : "key";
+  const authLabel = isOAuthConnection ? "OAuth" : isCookieConnection ? "Cookie" : "API Key";
   const isEmail = (v) => typeof v === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-  const displayName = isOAuth
-    ? isEmail(connection.email)
-      ? connection.email
-      : isEmail(connection.name)
-        ? connection.name
-        : connection.name ||
-          connection.email ||
-          connection.displayName ||
-          "OAuth Account"
-    : connection.name;
+  const displayName = isOAuthConnection
+    ? (isEmail(connection.email) ? connection.email : (isEmail(connection.name) ? connection.name : (connection.name || connection.email || connection.displayName || "OAuth Account")))
+    : (connection.name || connection.email || connection.displayName || "API Key");
   const secondaryEmail = getBestEffortEmail(connection);
   const accountIdentifier = getAccountIdentifier(connection);
 
@@ -191,6 +190,23 @@ export default function ConnectionRow({
     return "default";
   };
 
+  const getOneByOneVariant = () => {
+    if (!oneByOneStatus) return "default";
+    if (oneByOneStatus.state === "success") return "success";
+    if (oneByOneStatus.state === "failed") return "error";
+    if (oneByOneStatus.state === "testing") return "primary";
+    return "default";
+  };
+
+  const getOneByOneLabel = () => {
+    if (!oneByOneStatus) return null;
+    if (oneByOneStatus.state === "queued") return "queued";
+    if (oneByOneStatus.state === "testing") return "testing";
+    if (oneByOneStatus.state === "success") return "success";
+    if (oneByOneStatus.state === "failed") return oneByOneStatus.error ? `failed: ${oneByOneStatus.error}` : "failed";
+    return null;
+  };
+
   return (
     <div className={`group flex min-w-0 flex-col gap-3 rounded-lg p-2 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02] sm:flex-row sm:items-center sm:justify-between ${connection.isActive === false ? "opacity-60" : ""}`}>
       <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center sm:gap-3">
@@ -216,7 +232,7 @@ export default function ConnectionRow({
           </button>
         </div>
         <span className="material-symbols-outlined shrink-0 text-base text-text-muted">
-          {isOAuth ? "lock" : "key"}
+          {authIcon}
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -244,6 +260,9 @@ export default function ConnectionRow({
                 ? "disabled"
                 : effectiveStatus || "Unknown"}
             </Badge>
+            <Badge variant="default" size="sm">
+              {authLabel}
+            </Badge>
             {hasAnyProxy && (
               <Badge variant={proxyBadgeVariant} size="sm">
                 Proxy
@@ -264,6 +283,11 @@ export default function ConnectionRow({
               <span className="text-xs text-text-muted">
                 Auto: {connection.globalPriority}
               </span>
+            )}
+            {getOneByOneLabel() && (
+              <Badge variant={getOneByOneVariant()} size="sm">
+                {getOneByOneLabel()}
+              </Badge>
             )}
           </div>
           {hasAnyProxy && (
@@ -377,4 +401,8 @@ ConnectionRow.propTypes = {
   onUpdateProxy: PropTypes.func,
   onEdit: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
+  oneByOneStatus: PropTypes.shape({
+    state: PropTypes.string,
+    error: PropTypes.string,
+  }),
 };

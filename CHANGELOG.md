@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.4.36 (2026-05-29)
+
+### Features
+
+- **Support "Today" period in usage statistics**: Enhanced report query logic in `usageDb.js` to handle local today timezone bucketing and hourly granularity from midnight.
+- **OIDC Dashboard Authentication**: Integrated support for OpenID Connect (OIDC) authentication flows (`/api/auth/oidc/*` endpoints) to secure/standardize dashboard access.
+- **Cowork MCP Marketplace integration**: Exposes local MCP plugins bridge (`/api/mcp/*` endpoints) and marketplace modal matching upstream Cowork directory.
+- **Enhanced tunnel subsystem**: Restructured the cloudflared and tailscale tunnel modules into clean subdirectories (`src/lib/tunnel/cloudflare`, `src/lib/tunnel/tailscale`).
+- **Proxy Pool Deployment Tools**: Added proxy deployment support for Cloudflare Workers and Deno Deploy (`/api/proxy-pools/cloudflare-deploy`, `/api/proxy-pools/deno-deploy`).
+- **One-by-One Connection Validation**: Enhanced provider key/credential validation with one-by-one verification.
+- **Provider OAuth Service**: Added authentication/token refresh services for xAI and Codex.
+
+### Improvements
+
+- **Merge upstream 9router v0.4.66**: Adopted CLI tool card refactoring (`ApiKeySelect`/`BaseUrlSelect`), provider searching, bulk key pasting, and new provider/model metadata, while rejecting the SQLite state database migration (keeping the fork's local lowdb `db.json` structure).
+- **Provider Connection sorting**: Default connection listing to sort by provider name, then sub-sort by name/email.
+- **Unit test coverage expansion**: Added robust testing for reasoning injectors, minimax TTS/usage, qoder encoding, OIDC auth, and today's usage statistics.
+
 ## v0.4.35 (2026-05-28)
 
 ### Features

@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { UsageStats, CardSkeleton, SegmentedControl } from "@/shared/components";
+import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
 import ApiKeyUsageReport from "./components/ApiKeyUsageReport";
 
@@ -14,7 +14,7 @@ export default function UsagePage() {
   );
 }
 
-const TOP_LEVEL_TABS = ["overview", "details", "report"];
+const TOP_LEVEL_TABS = ["overview", "details", "logs", "report"];
 
 function getValidTopLevelTab(tab) {
   return TOP_LEVEL_TABS.includes(tab) ? tab : "overview";
@@ -45,6 +45,7 @@ function UsageContent() {
         options={[
           { value: "overview", label: "Overview" },
           { value: "details", label: "Details" },
+          { value: "logs", label: "Logs" },
           { value: "report", label: "Reports" },
         ]}
         value={selectedTab}
@@ -58,8 +59,8 @@ function UsageContent() {
         </Suspense>
       )}
       {selectedTab === "details" && <RequestDetailsTab />}
+      {selectedTab === "logs" && <RequestLogger />}
       {selectedTab === "report" && <ApiKeyUsageReport />}
     </div>
   );
 }
-
