@@ -30,6 +30,9 @@ const PUBLIC_API_PATHS = [
   "/api/version",
   "/api/settings/require-login",
   "/api/donate",
+  // MITM child process posts usage/request-detail/account-health here with its
+  // own `x-request-source: local` header gate inside each handler.
+  "/api/internal",
 ];
 
 // Public top-level prefixes (LLM API endpoints with their own API key auth).
