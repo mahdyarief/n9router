@@ -249,6 +249,9 @@ elif $LOCAL_INSTALL; then
   TARBALL_PATH="$PACK_DIR/$TARBALL_NAME"
 
   info "Installing globally from tarball: $TARBALL_NAME"
+  GLOBAL_NODE_MODULES=$(npm root -g)
+  rm -rf "$GLOBAL_NODE_MODULES/.$PKG_NAME-"*
+  npm uninstall -g "$PKG_NAME" || true
   npm install -g "$TARBALL_PATH"
   rm -rf "$PACK_DIR"
 
