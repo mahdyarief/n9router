@@ -271,7 +271,7 @@ export default function ProviderLimits() {
           page: String(targetPage),
           pageSize: String(pageSize),
           accountStatus: accountFilter,
-          sort: "priority",
+          sort: "provider",
         });
 
         if (providerFilter !== "all") {

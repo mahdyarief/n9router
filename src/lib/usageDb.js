@@ -667,21 +667,28 @@ export async function getUsageStats(period = "all") {
     }
   }
 
-  // Determine if we use dailySummary (7d/30d/60d/all) or live history (24h)
+  // Determine if we use dailySummary (today/7d/30d/60d/all) or live history (24h)
   const useDailySummary = period !== "24h";
 
   if (useDailySummary) {
     // Collect relevant date keys
-    const periodDays = { "7d": 7, "30d": 30, "60d": 60 };
-    const maxDays = periodDays[period] || null; // null = all
-    const today = new Date();
-    const dateKeys = Object.keys(dailySummary).filter((dateKey) => {
-      if (!maxDays) return true;
-      const parts = dateKey.split("-");
-      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-      const diffDays = Math.floor((today.getTime() - d.getTime()) / 86400000);
-      return diffDays < maxDays;
-    });
+    let maxDays = null;
+    let dateKeys = [];
+    if (period === "today") {
+      maxDays = 1;
+      dateKeys = [getLocalDateKey()];
+    } else {
+      const periodDays = { "7d": 7, "30d": 30, "60d": 60 };
+      maxDays = periodDays[period] || null; // null = all
+      const today = new Date();
+      dateKeys = Object.keys(dailySummary).filter((dateKey) => {
+        if (!maxDays) return true;
+        const parts = dateKey.split("-");
+        const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        const diffDays = Math.floor((today.getTime() - d.getTime()) / 86400000);
+        return diffDays < maxDays;
+      });
+    }
 
     for (const dateKey of dateKeys) {
       const day = dailySummary[dateKey];
@@ -904,6 +911,30 @@ export async function getChartData(period = "7d") {
   const history = db.data.history || [];
   const dailySummary = db.data.dailySummary || {};
   const now = Date.now();
+
+  if (period === "today") {
+    const today = new Date();
+    const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const startTime = midnight.getTime();
+    const bucketCount = 24;
+    const bucketMs = 3600000;
+    const labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+    const buckets = Array.from({ length: bucketCount }, (_, i) => {
+      const ts = startTime + i * bucketMs;
+      return { label: labelFn(ts), tokens: 0, cost: 0 };
+    });
+
+    for (const entry of history) {
+      const entryTime = new Date(entry.timestamp).getTime();
+      if (entryTime < startTime || entryTime > now) continue;
+      const idx = Math.min(Math.floor((entryTime - startTime) / bucketMs), bucketCount - 1);
+      if (idx >= 0 && idx < bucketCount) {
+        buckets[idx].tokens += (entry.tokens?.prompt_tokens || 0) + (entry.tokens?.completion_tokens || 0);
+        buckets[idx].cost += entry.cost || 0;
+      }
+    }
+    return buckets;
+  }
 
   // 24h: bucket by hour from live history
   if (period === "24h") {

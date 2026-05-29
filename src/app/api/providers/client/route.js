@@ -61,7 +61,9 @@ function sortConnections(connections, sort) {
       const orderA = USAGE_SUPPORTED_PROVIDERS.indexOf(a.provider);
       const orderB = USAGE_SUPPORTED_PROVIDERS.indexOf(b.provider);
       if (orderA !== orderB) return orderA - orderB;
-      return a.provider.localeCompare(b.provider);
+      const labelA = a.name || a.email || "";
+      const labelB = b.name || b.email || "";
+      return labelA.localeCompare(labelB);
     });
   }
 
@@ -80,7 +82,7 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const provider = searchParams.get("provider") || "all";
     const accountStatus = searchParams.get("accountStatus") || "all";
-    const sort = searchParams.get("sort") || "priority";
+    const sort = searchParams.get("sort") || "provider";
     const page = parsePositiveInt(searchParams.get("page"), 1);
     const pageSize = Math.min(parsePositiveInt(searchParams.get("pageSize"), DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE);
 

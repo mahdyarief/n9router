@@ -119,4 +119,30 @@ describe("usageDb cached token stats", () => {
     expect(stats.byProvider.anthropic.cachedTokens).toBe(700);
     expect(stats.byModel["claude (anthropic)"].cachedTokens).toBe(700);
   });
+
+  it("filters total requests and handles today period", async () => {
+    const { saveRequestUsage, getUsageStats, getChartData } = await import("@/lib/usageDb.js");
+    const now = Date.now();
+
+    await saveRequestUsage({
+      provider: "openai",
+      model: "gpt-4",
+      tokens: { prompt_tokens: 100, completion_tokens: 20 },
+      timestamp: new Date(now).toISOString(),
+    });
+    await saveRequestUsage({
+      provider: "openai",
+      model: "gpt-4",
+      tokens: { prompt_tokens: 100, completion_tokens: 20 },
+      timestamp: new Date(now - 2 * 86400000).toISOString(),
+    });
+
+    const todayStats = await getUsageStats("today");
+    expect(todayStats.totalRequests).toBe(1);
+
+    const todayChart = await getChartData("today");
+    expect(todayChart.length).toBe(24);
+    const currentHour = new Date().getHours();
+    expect(todayChart[currentHour].tokens).toBe(120);
+  });
 });
