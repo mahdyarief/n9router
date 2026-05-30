@@ -2,6 +2,12 @@
 import { STREAM_STALL_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
+// Terminal SSE sentinel. When a stream is aborted/errored mid-flight the
+// transform stream's flush() never runs, so the normal "data: [DONE]" is never
+// emitted and clients hang until their own timeout. We send it manually on the
+// graceful-close path so clients always see a clean end-of-stream.
+const DONE_SENTINEL = new TextEncoder().encode("data: [DONE]\n\n");
+
 // Get HH:MM:SS timestamp
 function getTimeString() {
   return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -97,11 +103,30 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
 export function createDisconnectAwareStream(transformStream, streamController) {
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
+  // Client-facing disconnect detection: when the upstream aborts/errors mid-flight,
+  // the transform flush() is skipped and "data: [DONE]" is never produced. Track
+  // whether we've terminated the client stream so we can inject the sentinel once.
+  let clientClosed = false;
+
+  // Emit "data: [DONE]" then close the client stream. Used on the abort/error path
+  // where the normal in-band sentinel from flush() will never arrive.
+  const closeWithSentinel = (controller) => {
+    if (clientClosed) return;
+    clientClosed = true;
+    try {
+      controller.enqueue(DONE_SENTINEL);
+    } catch (e) { /* downstream already gone */ }
+    try {
+      controller.close();
+    } catch (e) { /* already closed or cancelled */ }
+  };
 
   return new ReadableStream({
     async pull(controller) {
       if (!streamController.isConnected()) {
-        controller.close();
+        // Stream was aborted/stalled before this pull — terminate cleanly so the
+        // client sees an end-of-stream instead of hanging on a truncated response.
+        closeWithSentinel(controller);
         return;
       }
 
@@ -109,7 +134,9 @@ export function createDisconnectAwareStream(transformStream, streamController) {
         const { done, value } = await reader.read();
 
         if (done) {
+          // Graceful EOF: the transform flush() already emitted "data: [DONE]".
           streamController.handleComplete();
+          clientClosed = true;
           controller.close();
           return;
         }
@@ -136,11 +163,9 @@ export function createDisconnectAwareStream(transformStream, streamController) {
           code === "UND_ERR_SOCKET";
 
         if (!wasConnected || isNetworkClose) {
-          try {
-            controller.close();
-          } catch (e) {
-            // Stream might already be closed or cancelled
-          }
+          // Upstream stall/abort/reset: flush() was skipped, so emit the sentinel
+          // ourselves before closing so the client terminates cleanly.
+          closeWithSentinel(controller);
         } else {
           try {
             controller.error(error);
@@ -150,6 +175,8 @@ export function createDisconnectAwareStream(transformStream, streamController) {
     },
 
     cancel(reason) {
+      // Client went away — nothing to flush to it.
+      clientClosed = true;
       streamController.handleDisconnect(reason || "cancelled");
       reader.cancel();
       writer.abort();

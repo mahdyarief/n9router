@@ -3,7 +3,14 @@ import { PROVIDERS } from "../config/providers.js";
 import { v4 as uuidv4 } from "uuid";
 import { refreshKiroToken } from "../services/tokenRefresh.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
-import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+
+// SSE keepalive comment. Emitted when raw EventStream bytes arrive but don't yet
+// complete a parseable frame (partial-frame buffering during reasoning prefill).
+// Keeps the downstream stall watchdog (pipeWithDisconnect) aware of upstream
+// activity so it doesn't false-abort. Comment lines are dropped by the translate
+// parser and ignored by SSE clients in passthrough.
+const KIRO_KEEPALIVE = new TextEncoder().encode(": ka\n\n");
 
 /**
  * KiroExecutor - Executor for Kiro AI (AWS CodeWhisperer)
@@ -45,13 +52,42 @@ export class KiroExecutor extends BaseExecutor {
 
     while (true) {
       const headers = this.buildHeaders(credentials, stream);
-      
-      const response = await proxyAwareFetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(transformedBody),
-        signal
-      }, proxyOptions);
+
+      // Abort if upstream doesn't return response headers within FETCH_CONNECT_TIMEOUT_MS.
+      // Mirrors BaseExecutor.execute — without it a Kiro endpoint that accepts the TCP
+      // connection but never sends headers would hang handleChatCore's await forever
+      // (the stall watchdog isn't armed until the response body starts piping).
+      const connectCtrl = new AbortController();
+      const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), FETCH_CONNECT_TIMEOUT_MS);
+      const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
+
+      let response;
+      try {
+        response = await proxyAwareFetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(transformedBody),
+          signal: mergedSignal
+        }, proxyOptions);
+        // Headers received — body streaming is now governed by the stall watchdog.
+        clearTimeout(connectTimer);
+      } catch (error) {
+        clearTimeout(connectTimer);
+        // Connect timeout is internal: convert to a retryable network error instead of
+        // propagating an AbortError, which the caller would misclassify as a 499 client abort.
+        const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
+        if (isConnectTimeout) {
+          const { attempts: maxRetries, delayMs } = resolveRetryEntry(retryConfig[HTTP_STATUS.BAD_GATEWAY]);
+          if (maxRetries > 0 && retryAttempts < maxRetries) {
+            retryAttempts++;
+            log?.debug?.("RETRY", `connect timeout retry ${retryAttempts}/${maxRetries} after ${delayMs / 1000}s`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            continue;
+          }
+          throw new Error(`Kiro upstream connect timeout after ${FETCH_CONNECT_TIMEOUT_MS}ms`);
+        }
+        throw error;
+      }
 
       // Check if should retry based on status code
       const { attempts: maxRetries, delayMs } = resolveRetryEntry(retryConfig[response.status]);
@@ -94,7 +130,18 @@ export class KiroExecutor extends BaseExecutor {
     };
 
     const transformStream = new TransformStream({
-      async transform(chunk, controller) {
+      async transform(chunk, rawController) {
+        // Shadow the controller so we can tell whether this call emitted anything.
+        // Raw AWS EventStream frames can buffer for a long time (reasoning prefill)
+        // producing no SSE output; the downstream stall watchdog measures THIS
+        // stream's output, so a silent transform call looks like a stall and gets
+        // aborted. When a chunk arrived but yielded no frame, emit a keepalive.
+        let emitted = false;
+        const controller = {
+          enqueue: (d) => { emitted = true; rawController.enqueue(d); },
+          error: (e) => rawController.error(e),
+          terminate: () => rawController.terminate()
+        };
         // Append to buffer
         const newBuffer = new Uint8Array(buffer.length + chunk.length);
         newBuffer.set(buffer);
@@ -372,6 +419,13 @@ export class KiroExecutor extends BaseExecutor {
 
         if (iterations >= maxIterations) {
           console.warn("[Kiro] Max iterations reached in event parsing");
+        }
+
+        // Bytes arrived but yielded no SSE frame yet (partial-frame buffering
+        // during reasoning prefill). Emit a keepalive so the downstream stall
+        // watchdog registers upstream activity and doesn't false-abort.
+        if (!emitted) {
+          rawController.enqueue(KIRO_KEEPALIVE);
         }
       },
 
