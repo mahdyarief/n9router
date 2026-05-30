@@ -44,6 +44,7 @@ export default function ProfilePage() {
   const [antigravityIdeVersionStatus, setAntigravityIdeVersionStatus] = useState({ type: "", message: "" });
   const [antigravityIdeVersionLoading, setAntigravityIdeVersionLoading] = useState(false);
   const [antigravityPayloadGuardLoading, setAntigravityPayloadGuardLoading] = useState(false);
+  const [streamWatchdogLoading, setStreamWatchdogLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -523,6 +524,24 @@ export default function ProfilePage() {
     }
   };
 
+  const updateStreamWatchdogEnabled = async (enabled) => {
+    setStreamWatchdogLoading(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ streamWatchdogEnabled: enabled }),
+      });
+      if (res.ok) {
+        setSettings(prev => ({ ...prev, streamWatchdogEnabled: enabled }));
+      }
+    } catch (err) {
+      console.error("Failed to update streamWatchdogEnabled:", err);
+    } finally {
+      setStreamWatchdogLoading(false);
+    }
+  };
+
   const updateMitmAntigravityIdeVersion = async (event) => {
     event.preventDefault();
     const version = antigravityIdeVersionDraft.trim() || "1.23.2";
@@ -648,6 +667,7 @@ export default function ProfilePage() {
   const mitmAntigravityIdeVersionOverrideEnabled = settings.mitmAntigravityIdeVersionOverrideEnabled === true;
   const mitmAntigravityHostRewriteEnabled = settings.mitmAntigravityHostRewriteEnabled !== false;
   const mitmAntigravityPayloadGuardEnabled = settings.mitmAntigravityPayloadGuardEnabled !== false;
+  const streamWatchdogEnabled = settings.streamWatchdogEnabled !== false;
   const mitmAntigravityDebugLogDir = settings.mitmAntigravityDebugLogDir || "";
   const periodicDbBackupsEnabled = settings.periodicDbBackupsEnabled !== false;
 
@@ -1227,6 +1247,19 @@ export default function ProfilePage() {
               checked={mitmAntigravityPayloadGuardEnabled}
               onChange={updateMitmAntigravityPayloadGuardEnabled}
               disabled={loading || antigravityPayloadGuardLoading}
+            />
+          </div>
+          <div className="flex items-center justify-between pt-4 mt-4 border-t border-border/50">
+            <div>
+              <p className="font-medium">Stream Watchdog</p>
+              <p className="text-sm text-text-muted">
+                Aborts upstream streams that go silent past the stall timeout and injects a clean end-of-stream so clients don&apos;t hang. Turn OFF to revert to legacy streaming (recommended only if reasoning models like Kiro thinking get cut off mid-response). When OFF, a genuinely stalled upstream may keep the connection open until your client times out.
+              </p>
+            </div>
+            <Toggle
+              checked={streamWatchdogEnabled}
+              onChange={updateStreamWatchdogEnabled}
+              disabled={loading || streamWatchdogLoading}
             />
           </div>
           <div className="flex items-center justify-between pt-4 mt-4 border-t border-border/50">

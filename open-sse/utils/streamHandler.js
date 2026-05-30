@@ -100,7 +100,7 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
  * for long periods while raw bytes still flow (e.g. Kiro EventStream
  * binary frames buffering, Claude reasoning streams).
  */
-export function createDisconnectAwareStream(transformStream, streamController) {
+export function createDisconnectAwareStream(transformStream, streamController, streamWatchdogEnabled = true) {
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
   // Client-facing disconnect detection: when the upstream aborts/errors mid-flight,
@@ -109,13 +109,16 @@ export function createDisconnectAwareStream(transformStream, streamController) {
   let clientClosed = false;
 
   // Emit "data: [DONE]" then close the client stream. Used on the abort/error path
-  // where the normal in-band sentinel from flush() will never arrive.
+  // where the normal in-band sentinel from flush() will never arrive. When the watchdog
+  // is disabled (legacy v0.4.35 behavior) we close WITHOUT injecting the sentinel.
   const closeWithSentinel = (controller) => {
     if (clientClosed) return;
     clientClosed = true;
-    try {
-      controller.enqueue(DONE_SENTINEL);
-    } catch (e) { /* downstream already gone */ }
+    if (streamWatchdogEnabled) {
+      try {
+        controller.enqueue(DONE_SENTINEL);
+      } catch (e) { /* downstream already gone */ }
+    }
     try {
       controller.close();
     } catch (e) { /* already closed or cancelled */ }
@@ -200,7 +203,7 @@ export function createDisconnectAwareStream(transformStream, streamController) {
  * @param {TransformStream} transformStream - Transform stream for SSE
  * @param {object} streamController - Stream controller from createStreamController
  */
-export function pipeWithDisconnect(providerResponse, transformStream, streamController) {
+export function pipeWithDisconnect(providerResponse, transformStream, streamController, streamWatchdogEnabled = true) {
   let stallTimer = null;
   let chunkCount = 0;
   let totalBytes = 0;
@@ -211,6 +214,7 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
   };
   const armStall = () => {
+    if (!streamWatchdogEnabled) return;   // OFF → never arm watchdog (v0.4.35 behavior)
     clearStall();
     stallTimer = setTimeout(() => {
       stallTimer = null;
@@ -234,7 +238,7 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
   };
 
   armStall();
-  dbg(tag, `pipe start | stallTimeout=${STREAM_STALL_TIMEOUT_MS}ms`);
+  dbg(tag, `pipe start | watchdog=${streamWatchdogEnabled ? `on stallTimeout=${STREAM_STALL_TIMEOUT_MS}ms` : "off (legacy)"}`);
 
   const upstreamTap = new TransformStream({
     transform(chunk, controller) {
@@ -259,7 +263,8 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
 
   return createDisconnectAwareStream(
     { readable: transformedBody, writable: { getWriter: () => ({ abort: () => Promise.resolve() }) } },
-    wrappedController
+    wrappedController,
+    streamWatchdogEnabled
   );
 }
 

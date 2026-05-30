@@ -21,7 +21,7 @@ import { convertResponsesStreamToJson } from "../transformer/streamToJsonConvert
  * @param {string} options.connectionId - Connection ID for usage tracking
  * @returns {Promise<{success: boolean, response?: Response, status?: number, error?: string}>}
  */
-export async function handleResponsesCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, connectionId }) {
+export async function handleResponsesCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, connectionId, streamWatchdogEnabled = true }) {
   // Convert Responses API format to Chat Completions format
   const convertedBody = convertResponsesApiFormat(body);
 
@@ -42,6 +42,7 @@ export async function handleResponsesCore({ body, modelInfo, credentials, log, o
     onRequestSuccess,
     onDisconnect,
     connectionId,
+    streamWatchdogEnabled,
     sourceFormatOverride: "openai-responses"
   });
 

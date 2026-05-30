@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.39 (2026-05-30)
+
+### Features
+
+- **Stream Watchdog toggle**: New `streamWatchdogEnabled` setting (default ON) to opt out of SSE stall detection. When OFF, reverts to v0.4.35 legacy streaming (no stall abort, no `[DONE]`-on-abort sentinel, no Kiro keepalive). Addresses reasoning model regressions where Kiro claude-opus-4.8-thinking pauses mid-stream during server-side reasoning and was being killed by the 30s stall watchdog. Toggle available in dashboard Profile settings.
+
 ## v0.4.38 (2026-05-30)
 
 ### Fixes

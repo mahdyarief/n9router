@@ -42,7 +42,7 @@ export class KiroExecutor extends BaseExecutor {
   /**
    * Custom execute for Kiro - handles AWS EventStream binary response with retry support
    */
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, streamWatchdogEnabled = true }) {
     const url = this.buildUrl(model, stream, 0);
     const transformedBody = this.transformRequest(model, body, stream, credentials);
     
@@ -105,7 +105,7 @@ export class KiroExecutor extends BaseExecutor {
       // Success - transform and return
       // For Kiro, we need to transform the binary EventStream to SSE
       // Create a TransformStream to convert binary to SSE text
-      const transformedResponse = this.transformEventStreamToSSE(response, model);
+      const transformedResponse = this.transformEventStreamToSSE(response, model, streamWatchdogEnabled);
       return { response: transformedResponse, url, headers, transformedBody };
     }
   }
@@ -114,7 +114,7 @@ export class KiroExecutor extends BaseExecutor {
    * Transform AWS EventStream binary response to SSE text stream
    * Using TransformStream instead of ReadableStream.pull() to avoid Workers timeout
    */
-  transformEventStreamToSSE(response, model) {
+  transformEventStreamToSSE(response, model, streamWatchdogEnabled = true) {
     let buffer = new Uint8Array(0);
     let chunkIndex = 0;
     const responseId = `chatcmpl-${Date.now()}`;
@@ -424,7 +424,8 @@ export class KiroExecutor extends BaseExecutor {
         // Bytes arrived but yielded no SSE frame yet (partial-frame buffering
         // during reasoning prefill). Emit a keepalive so the downstream stall
         // watchdog registers upstream activity and doesn't false-abort.
-        if (!emitted) {
+        // Skipped when the watchdog is disabled (legacy v0.4.35 behavior).
+        if (!emitted && streamWatchdogEnabled) {
           rawController.enqueue(KIRO_KEEPALIVE);
         }
       },

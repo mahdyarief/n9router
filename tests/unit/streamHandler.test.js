@@ -6,9 +6,8 @@
  *    mid-flight, the SSE transform's flush() is skipped and the normal
  *    "data: [DONE]" is never produced. createDisconnectAwareStream must inject the
  *    sentinel on the abort/error close path, while NOT double-emitting on graceful EOF.
- *  - The two-phase stall watchdog in pipeWithDisconnect: a generous first-byte
- *    window (reasoning models prefill before emitting) that switches to the tight
- *    inter-chunk stall window once bytes start flowing.
+ *  - The streamWatchdogEnabled toggle: when OFF (legacy v0.4.35 behavior), the stall
+ *    watchdog never arms and no terminal sentinel is injected on abort/error.
  *
  * createDisconnectAwareStream locks the writable internally, so — exactly like
  * the real caller pipeWithDisconnect — these tests hand it a { readable,
@@ -17,7 +16,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createDisconnectAwareStream, pipeWithDisconnect } from "../../open-sse/utils/streamHandler.js";
-import { STREAM_STALL_TIMEOUT_MS, STREAM_FIRST_BYTE_TIMEOUT_MS } from "../../open-sse/config/runtimeConfig.js";
+import { STREAM_STALL_TIMEOUT_MS } from "../../open-sse/config/runtimeConfig.js";
 
 const enc = new TextEncoder();
 
@@ -155,48 +154,79 @@ describe("pipeWithDisconnect — end-to-end passthrough", () => {
   });
 });
 
-describe("pipeWithDisconnect — two-phase stall watchdog", () => {
-  it("does NOT abort at the inter-chunk stall window while waiting for the first byte", () => {
+describe("pipeWithDisconnect — watchdog enabled (default)", () => {
+  it("arms the stall timer and aborts when the upstream goes silent", () => {
     vi.useFakeTimers();
     try {
       const ctrl = makeController();
-      // Upstream returned headers but emits no body bytes yet (reasoning prefill).
-      const body = new ReadableStream({ start() {} });
-      pipeWithDisconnect({ body }, new TransformStream(), ctrl);
+      const body = new ReadableStream({ start() {} }); // silent upstream, no bytes ever
+      pipeWithDisconnect({ body }, new TransformStream(), ctrl); // default ON
 
-      // Past the tight inter-chunk window — must NOT fire during first-byte wait.
-      vi.advanceTimersByTime(STREAM_STALL_TIMEOUT_MS + 1000);
+      // Before the window: no abort yet.
+      vi.advanceTimersByTime(STREAM_STALL_TIMEOUT_MS - 1000);
       expect(ctrl.calls.some((c) => c.startsWith("error:"))).toBe(false);
 
-      // Reaching the generous first-byte window fires a first-byte timeout.
-      vi.advanceTimersByTime(STREAM_FIRST_BYTE_TIMEOUT_MS - STREAM_STALL_TIMEOUT_MS);
-      expect(ctrl.calls).toContain("error:stream first-byte timeout");
+      // Past the stall window: watchdog fires → error + abort.
+      vi.advanceTimersByTime(2000);
+      expect(ctrl.calls).toContain("error:stream stall timeout");
       expect(ctrl.calls).toContain("abort");
     } finally {
       vi.useRealTimers();
     }
   });
+});
 
-  it("switches to the tight inter-chunk stall window once the first byte arrives", async () => {
+describe("pipeWithDisconnect — watchdog disabled (legacy v0.4.35)", () => {
+  it("never arms a stall timer when streamWatchdogEnabled=false", () => {
     vi.useFakeTimers();
     try {
       const ctrl = makeController();
-      // One chunk, then silence — flips the watchdog from first-byte to inter-chunk.
-      const body = new ReadableStream({
-        start(c) { c.enqueue(enc.encode('data: {"a":1}\n\n')); },
-      });
-      const client = pipeWithDisconnect({ body }, new TransformStream(), ctrl);
-      const reader = client.getReader();
+      const body = new ReadableStream({ start() {} }); // silent upstream, no bytes ever
+      pipeWithDisconnect({ body }, new TransformStream(), ctrl, false); // OFF
 
-      const first = await reader.read(); // pumps the chunk through the tap → re-arms at stall window
-      expect(first.done).toBe(false);
+      // Advance far past the stall window — disabled watchdog must never fire.
+      vi.advanceTimersByTime(STREAM_STALL_TIMEOUT_MS * 5 + 5000);
 
-      // Now the tight inter-chunk window applies: a stall fires at STREAM_STALL_TIMEOUT_MS.
-      vi.advanceTimersByTime(STREAM_STALL_TIMEOUT_MS + 1000);
-      expect(ctrl.calls).toContain("error:stream stall timeout");
-      expect(ctrl.calls).not.toContain("error:stream first-byte timeout");
+      expect(ctrl.calls.some((c) => c.startsWith("error:"))).toBe(false);
+      expect(ctrl.calls).not.toContain("abort");
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("createDisconnectAwareStream — watchdog disabled (legacy v0.4.35)", () => {
+  it("does NOT inject data: [DONE] on the abort/error path when disabled", async () => {
+    const abortErr = new Error("The operation was aborted");
+    abortErr.name = "AbortError";
+    let stage = 0;
+    const readable = new ReadableStream({
+      pull(c) {
+        if (stage++ === 0) c.enqueue(enc.encode('data: {"hello":1}\n\n'));
+        else c.error(abortErr);
+      },
+    });
+    const ctrl = makeController();
+    const client = createDisconnectAwareStream(asTransformLike(readable), ctrl, false); // OFF
+
+    const out = await readAll(client);
+    expect(out).toContain('data: {"hello":1}');
+    expect(countSentinels(out)).toBe(0); // no injected sentinel when disabled
+    expect(ctrl.calls.some((c) => c.startsWith("error:"))).toBe(true);
+  });
+
+  it("still emits a single [DONE] on graceful EOF even when disabled", async () => {
+    const readable = new ReadableStream({
+      start(c) {
+        c.enqueue(enc.encode('data: {"a":1}\n\n'));
+        c.enqueue(enc.encode("data: [DONE]\n\n")); // produced by transform flush()
+        c.close();
+      },
+    });
+    const ctrl = makeController();
+    const client = createDisconnectAwareStream(asTransformLike(readable), ctrl, false);
+    const out = await readAll(client);
+    expect(countSentinels(out)).toBe(1); // graceful path unaffected by flag
+    expect(ctrl.calls).toContain("complete");
   });
 });
