@@ -49,6 +49,36 @@ The system has a split routing architecture:
 
 Request flow: `API route → src/sse/handlers/chat.js → open-sse/handlers/chatCore.js → executor → upstream provider → response translator → client`
 
+### Request Pipeline (`open-sse/handlers/chatCore.js`)
+
+`handleChatCore` is the heart of the system; stage order matters and is easy to get wrong:
+
+1. **Detect source format** from body shape (`detectFormat`); resolve `targetFormat` from provider/model.
+2. **Bypass check** (`handleBypassRequest`) — warmup pings, title-generation, and skip patterns short-circuit before any upstream call.
+3. **Translate OR passthrough** (see below).
+4. **RTK compression** (`compressMessages`) + **Caveman** injection run on the *final translated body, just before dispatch* — not on the inbound request. They operate on `finalFormat` (= `sourceFormat` when passthrough, else `targetFormat`).
+5. **Track pending** (`trackPendingRequest(...true)`) + log `PENDING`, then `executor.execute`.
+6. **401/403 → token refresh → single retry**; non-ok upstream → error result.
+7. Dispatch to the streaming / non-streaming / forced-SSE-to-JSON handler.
+
+### Native Passthrough
+
+When the detected client tool and upstream provider share an ecosystem (`isNativePassthrough`, e.g. Claude Code → a Claude-format provider), translation is skipped entirely — only `model` and the Bearer token are swapped. Lossless, avoids translation artifacts. RTK, caveman, and streaming still apply.
+
+### RTK Token Saver (`open-sse/rtk/`)
+
+Auto-detects tool-output `tool_result` blocks (git diff, grep, ls, tree, logs…) and applies lossless compression filters (`rtk/filters/`, dispatched via `applyFilter.js` + `autodetect.js`). Fail-safe: if a filter throws or grows the output, the original text is kept. Toggled per-request via the `rtkEnabled` flag threaded through `handleChatCore`.
+
+### SSE Streaming Lifecycle (`open-sse/utils/stream.js`, `streamHandler.js`)
+
+Streaming has subtle invariants worth understanding before touching it:
+
+- `createStreamController` owns the upstream `AbortController` and the `connected` flag; its `handleComplete`/`handleError`/`handleDisconnect` are mutually-exclusive terminal states (first one wins).
+- `pipeWithDisconnect` wires `upstreamResponse.body → upstreamTap (stall watchdog) → SSE transform → createDisconnectAwareStream → client`. The stall watchdog (`STREAM_STALL_TIMEOUT_MS`) measures *whatever stream it taps*, and aborts the fetch if no bytes arrive in the window.
+- The SSE transform's `flush()` is where `trackPendingRequest(...false)`, usage logging, `onStreamComplete`, and the terminal `data: [DONE]` happen. **`flush()` only runs on graceful EOF — never on abort/error.** Any abort/stall path must therefore handle pending-clear (via the controller's `onError`) and emit `[DONE]` itself, or clients hang on a truncated stream.
+- `usageDb.js` has a `PENDING_TIMEOUT_MS` safety net that force-clears leaked pending counts — a backstop, not the primary cleanup path.
+- Provider executors that override `execute()` (e.g. `kiro.js`) must replicate `base.js`'s `FETCH_CONNECT_TIMEOUT_MS` themselves, or a stalled connect hangs the whole request.
+
 ### Path Aliases
 
 Defined in `jsconfig.json`:
@@ -126,7 +156,8 @@ Cloudflare Workers deployment for optional cloud sync relay. Has its own `wrangl
 - Tests live in `tests/unit/` and use Vitest v4
 - Vitest is installed in `/tmp/node_modules` to avoid conflicts with the root Next.js project's hoisting
 - Test config is at `tests/vitest.config.js` — it aliases `open-sse` to the local package
-- Current coverage: embeddings core, cloud worker handler, OAuth cursor auto-import, OpenAI-to-Claude translation, provider validation, translator request normalization
+- Coverage spans embeddings core, cloud worker handler, OAuth cursor auto-import, translation, provider validation, and the SSE stream handler (`unit/streamHandler.test.js`). Some pre-existing failures are unrelated to streaming — establish a baseline (e.g. `git stash` your changes and run once) before assuming a failure is yours.
+- These tests use Web Streams directly: `createDisconnectAwareStream` locks the transform's writable internally, so drive a `ReadableStream` (deliver chunks across separate `pull()` calls, not synchronously in `start()`) rather than calling `getWriter()` yourself.
 
 ## CI/CD
 

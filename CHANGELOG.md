@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.4.38 (2026-05-30)
+
+### Fixes
+
+- **Streaming requests no longer hang or return truncated results**: Fixed three issues in the SSE path that caused completions (notably Kiro `claude-opus-4.8` with thinking) to never finish.
+  - **Kiro stall false-trigger**: The watchdog measured Kiro's transformed output instead of raw upstream activity, so reasoning prefill looked like a stall and aborted healthy streams. Kiro's transform now emits a keepalive on raw-byte activity.
+  - **Truncated streams hung clients**: On abort/stall/reset the transform's `flush()` is skipped, so terminal `data: [DONE]` was never sent. `createDisconnectAwareStream` now emits it before closing (guarded against double-emit on graceful EOF).
+  - **Kiro connect hang**: `KiroExecutor.execute` skipped `FETCH_CONNECT_TIMEOUT_MS`; a connection that never returned headers hung indefinitely. It now applies the same connect timeout as `base.js`.
+
+### Tests
+
+- Added `tests/unit/streamHandler.test.js` covering the terminal-sentinel safety net (abort/stall/reset injection, no double-emit on EOF, passthrough).
+
+## v0.4.37 (2026-05-30)
+
+### Fixes
+
+- **DATA_DIR permissions**: Entrypoint script now dynamically sets permissions for custom `DATA_DIR` paths so non-default storage locations work in Docker.
+- **API key rate-limit UI**: Restored the rate-limit controls in the endpoint settings (`EndpointPageClient.js`) that were orphaned during the upstream 0.4.66 merge.
+
+### Improvements
+
+- **Docker workflow**: Simplified the publish workflow by removing GHCR support and updating the image tagging strategy.
+
 ## v0.4.36 (2026-05-29)
 
 ### Features
