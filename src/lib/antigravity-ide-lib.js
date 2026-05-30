@@ -138,6 +138,10 @@ function resolveEnvPath(p, env = process.env) {
   return p.replace(/%([^%]+)%/g, (_, v) => env[v] || "");
 }
 
+function resolvePlatformPaths(paths = [], env = process.env) {
+  return paths.map((p) => resolveEnvPath(p, env)).filter(Boolean);
+}
+
 function matchesPathRequirements(target, platform, existsSync, env) {
   const requirements = target.pathRequirements?.[platform];
   if (!requirements) return true;
@@ -417,8 +421,38 @@ export function getAntigravityStatus(target) {
   };
 }
 
+export function listAntigravityTargets({
+  platform = PLATFORM,
+  existsSync = fs.existsSync,
+  env = process.env,
+  detectProcesses = detectAntigravityProcesses,
+} = {}) {
+  return Object.values(TARGETS).map((target) => {
+    const installation = detectAntigravityInstallation(target, { platform, existsSync, env });
+    const proc = detectProcesses(target);
+    const processTerms = target.processSearch[platform] || [];
+    return {
+      id: target.id,
+      label: target.displayName,
+      name: target.displayName,
+      route: target.route,
+      installed: installation.installed,
+      binary: installation.binary,
+      running: proc.running,
+      pids: proc.pids,
+      processTerms,
+      installPaths: resolvePlatformPaths(target.installPaths[platform] || [], env),
+      bundlePaths: resolvePlatformPaths(target.bundlePaths?.[platform] || [], env),
+    };
+  });
+}
+
 export async function handleAntigravityGet(targetId) {
   return Response.json(getAntigravityStatus(getAntigravityTarget(targetId)));
+}
+
+export async function handleAntigravityTargetsGet() {
+  return Response.json({ targets: listAntigravityTargets() });
 }
 
 export async function handleAntigravityPost(targetId, request) {

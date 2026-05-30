@@ -1,19 +1,23 @@
 /**
  * Unit tests for open-sse/utils/streamHandler.js
  *
- * Focus: the terminal-sentinel safety net (Bug 2). When an upstream stream is
- * aborted/errored mid-flight, the SSE transform's flush() is skipped and the
- * normal "data: [DONE]" is never produced — leaving clients hanging on a
- * truncated response. createDisconnectAwareStream must inject the sentinel on
- * the abort/error close path, while NOT double-emitting on graceful EOF.
+ * Focus:
+ *  - The terminal-sentinel safety net: when an upstream stream is aborted/errored
+ *    mid-flight, the SSE transform's flush() is skipped and the normal
+ *    "data: [DONE]" is never produced. createDisconnectAwareStream must inject the
+ *    sentinel on the abort/error close path, while NOT double-emitting on graceful EOF.
+ *  - The two-phase stall watchdog in pipeWithDisconnect: a generous first-byte
+ *    window (reasoning models prefill before emitting) that switches to the tight
+ *    inter-chunk stall window once bytes start flowing.
  *
  * createDisconnectAwareStream locks the writable internally, so — exactly like
  * the real caller pipeWithDisconnect — these tests hand it a { readable,
  * writable-stub } object and drive the readable side directly.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createDisconnectAwareStream, pipeWithDisconnect } from "../../open-sse/utils/streamHandler.js";
+import { STREAM_STALL_TIMEOUT_MS, STREAM_FIRST_BYTE_TIMEOUT_MS } from "../../open-sse/config/runtimeConfig.js";
 
 const enc = new TextEncoder();
 
@@ -148,5 +152,51 @@ describe("pipeWithDisconnect — end-to-end passthrough", () => {
     expect(out).toContain('data: {"a":1}');
     expect(countSentinels(out)).toBe(1);
     expect(ctrl.calls).toContain("complete");
+  });
+});
+
+describe("pipeWithDisconnect — two-phase stall watchdog", () => {
+  it("does NOT abort at the inter-chunk stall window while waiting for the first byte", () => {
+    vi.useFakeTimers();
+    try {
+      const ctrl = makeController();
+      // Upstream returned headers but emits no body bytes yet (reasoning prefill).
+      const body = new ReadableStream({ start() {} });
+      pipeWithDisconnect({ body }, new TransformStream(), ctrl);
+
+      // Past the tight inter-chunk window — must NOT fire during first-byte wait.
+      vi.advanceTimersByTime(STREAM_STALL_TIMEOUT_MS + 1000);
+      expect(ctrl.calls.some((c) => c.startsWith("error:"))).toBe(false);
+
+      // Reaching the generous first-byte window fires a first-byte timeout.
+      vi.advanceTimersByTime(STREAM_FIRST_BYTE_TIMEOUT_MS - STREAM_STALL_TIMEOUT_MS);
+      expect(ctrl.calls).toContain("error:stream first-byte timeout");
+      expect(ctrl.calls).toContain("abort");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("switches to the tight inter-chunk stall window once the first byte arrives", async () => {
+    vi.useFakeTimers();
+    try {
+      const ctrl = makeController();
+      // One chunk, then silence — flips the watchdog from first-byte to inter-chunk.
+      const body = new ReadableStream({
+        start(c) { c.enqueue(enc.encode('data: {"a":1}\n\n')); },
+      });
+      const client = pipeWithDisconnect({ body }, new TransformStream(), ctrl);
+      const reader = client.getReader();
+
+      const first = await reader.read(); // pumps the chunk through the tap → re-arms at stall window
+      expect(first.done).toBe(false);
+
+      // Now the tight inter-chunk window applies: a stall fires at STREAM_STALL_TIMEOUT_MS.
+      vi.advanceTimersByTime(STREAM_STALL_TIMEOUT_MS + 1000);
+      expect(ctrl.calls).toContain("error:stream stall timeout");
+      expect(ctrl.calls).not.toContain("error:stream first-byte timeout");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

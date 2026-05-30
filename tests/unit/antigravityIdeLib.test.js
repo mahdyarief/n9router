@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectAntigravityInstallation,
   getAntigravityTarget,
+  listAntigravityTargets,
 } from "../../src/lib/antigravity-ide-lib.js";
 
 describe("antigravity-ide-lib", () => {
@@ -171,6 +172,34 @@ describe("antigravity-ide-lib", () => {
     })).toEqual({
       installed: false,
       binary: null,
+    });
+  });
+
+  it("lists API-safe target path metadata for tray launch controls", () => {
+    const existingPaths = new Set([
+      "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide",
+    ]);
+
+    const targets = listAntigravityTargets({
+      platform: "darwin",
+      existsSync: (candidate) => existingPaths.has(candidate),
+    });
+
+    expect(targets.map((target) => target.id)).toEqual([
+      "antigravity-app",
+      "antigravity-app-v2",
+      "antigravity-ide",
+    ]);
+    expect(targets[2]).toMatchObject({
+      id: "antigravity-ide",
+      label: "Antigravity IDE",
+      route: "/api/antigravity-ide",
+      installed: true,
+      binary: "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide",
+      processTerms: ["Antigravity IDE.app"],
+      installPaths: [
+        "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide",
+      ],
     });
   });
 });
