@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.40 (2026-06-02)
+
+### Fixes
+
+- **MITM token swap retries on upstream 500s**: Antigravity token-swap requests now treat HTTP 500 as retryable instead of logging the response as a success, so the pool can move on to the next account after retry exhaustion.
+
 ## v0.4.39 (2026-05-30)
 
 ### Features
