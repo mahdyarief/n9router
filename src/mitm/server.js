@@ -24,6 +24,7 @@ const { createAntigravityDebugContext, extractBearerToken, maskToken } = require
 const { getCertForDomain } = require("./cert/generate");
 const { buildInputOnlyRequestDetail, createTokenSwapUsageObserver, generateDetailId } = require("./usageTracker");
 const { pushHealthEvent, getLastEventStatus, migrateToEmailKeys } = require("./healthStore");
+const { getTokenSwapRetryType, isRetryableTokenSwapStatus } = require("./tokenSwapRetry");
 
 const { applyRtkCompression } = require("./rtkCompressor");
 const { applyAntigravityIdeVersionOverride } = require("./antigravityIdeVersion");
@@ -203,7 +204,7 @@ async function passthrough(req, res, bodyBuffer, onResponse, debugContext = null
 
 // ── Token swap forward ────────────────────────────────────────
 // Unlike passthrough(), this checks upstream statusCode BEFORE
-// piping to client — enabling auto-retry on 403/429/503.
+// piping to client — enabling auto-retry on retryable auth/quota/server errors.
 
 async function tokenSwapForward(req, res, bodyBuffer, connections, model, strategy, provider, requestStartTime, debugContext = null) {
   let targetHost = (req.headers.host || TARGET_HOSTS[0]).split(":")[0];
@@ -286,16 +287,12 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
             servername: targetHost,
             rejectUnauthorized: false
           }, (forwardRes) => {
-            if (forwardRes.statusCode === 403 || forwardRes.statusCode === 429 || forwardRes.statusCode === 503 || forwardRes.statusCode === 401) {
+            if (isRetryableTokenSwapStatus(forwardRes.statusCode)) {
               const chunks = [];
               forwardRes.on("data", c => chunks.push(c));
               forwardRes.on("end", () => {
                 const body = Buffer.concat(chunks).toString();
-                const retryType = forwardRes.statusCode === 401
-                  ? "auth"
-                  : forwardRes.statusCode === 403
-                    ? "permission"
-                    : "quota";
+                const retryType = getTokenSwapRetryType(forwardRes.statusCode);
                 resolve({ retry: true, retryType, body, headers: forwardRes.headers, statusCode: forwardRes.statusCode });
               });
             } else {
@@ -307,9 +304,9 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
           forwardReq.end();
         });
 
-        if (result.retry && (result.retryType === "quota" || result.retryType === "permission")) {
-          // ── Unified retry: 403 IAM denial, 429 and 503 treated identically ──
-          // Both are false-positive-prone from Antigravity; retry same account
+        if (result.retry && (result.retryType === "quota" || result.retryType === "permission" || result.retryType === "server_error")) {
+          // ── Unified retry: 403 IAM denial, 429, 500 and 503 treated identically ──
+          // These can be false-positive-prone from Antigravity; retry same account
           // with exponential backoff before moving on.
           const maxRetries = getAntigravity503RetryCount(conn.antigravity503RetryCount);
           if (!conn._quotaRetryCount) conn._quotaRetryCount = 0;
