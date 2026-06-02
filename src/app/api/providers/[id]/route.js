@@ -101,6 +101,7 @@ export async function PUT(request, { params }) {
       lastUsedAt,
       consecutiveUseCount,
       antigravity503RetryCount,
+      kiroRetryCount,
       accountType,
       providerSpecificData
     } = body;
@@ -133,6 +134,7 @@ export async function PUT(request, { params }) {
     if (lastUsedAt !== undefined) updateData.lastUsedAt = lastUsedAt;
     if (consecutiveUseCount !== undefined) updateData.consecutiveUseCount = consecutiveUseCount;
     if (antigravity503RetryCount !== undefined) updateData.antigravity503RetryCount = antigravity503RetryCount;
+    if (kiroRetryCount !== undefined) updateData.kiroRetryCount = kiroRetryCount;
     if (accountType !== undefined) updateData.accountType = accountType;
 
     if (

@@ -184,6 +184,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       antigravity503RetryCount: connection.antigravity503RetryCount != null
         ? connection.antigravity503RetryCount
         : (settings.antigravity503RetryCount ?? null),
+      // Per-account retry override for Kiro executor
+      // Resolves: per-account → global setting → null (executor uses DEFAULT_KIRO_RETRY_COUNT)
+      kiroRetryCount: connection.kiroRetryCount != null
+        ? connection.kiroRetryCount
+        : (settings.kiroRetryCount ?? null),
       // Pass full connection for clearAccountError to read modelLock_* keys
       _connection: connection
     };

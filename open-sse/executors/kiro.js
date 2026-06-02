@@ -3,7 +3,7 @@ import { PROVIDERS } from "../config/providers.js";
 import { v4 as uuidv4 } from "uuid";
 import { refreshKiroToken } from "../services/tokenRefresh.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
-import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, DEFAULT_KIRO_RETRY_COUNT, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 
 // SSE keepalive comment. Emitted when raw EventStream bytes arrive but don't yet
 // complete a parseable frame (partial-frame buffering during reasoning prefill).
@@ -11,6 +11,16 @@ import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FET
 // activity so it doesn't false-abort. Comment lines are dropped by the translate
 // parser and ignored by SSE clients in passthrough.
 const KIRO_KEEPALIVE = new TextEncoder().encode(": ka\n\n");
+
+// Exponential backoff config for Kiro retries (mirrors MITM approach)
+const KIRO_BACKOFF_BASE_MS = 2000;
+const KIRO_BACKOFF_CAP_MS = 15000;
+
+// Transient 400 patterns that should be retried (Kiro-specific false positives)
+const KIRO_RETRYABLE_400_PATTERNS = ["improperly formed request"];
+
+// Status codes eligible for in-executor retry with exponential backoff
+const KIRO_RETRYABLE_STATUSES = new Set([400, 429, 500, 502, 503, 504]);
 
 /**
  * KiroExecutor - Executor for Kiro AI (AWS CodeWhisperer)
@@ -40,23 +50,31 @@ export class KiroExecutor extends BaseExecutor {
   }
 
   /**
-   * Custom execute for Kiro - handles AWS EventStream binary response with retry support
+   * Check if a 400 error is a known transient Kiro issue that should be retried.
+   * Only retries specific patterns — genuine validation errors are not retried.
+   */
+  _isRetryable400(responseBody) {
+    if (!responseBody) return false;
+    const lower = responseBody.toLowerCase();
+    return KIRO_RETRYABLE_400_PATTERNS.some(pattern => lower.includes(pattern));
+  }
+
+  /**
+   * Custom execute for Kiro - handles AWS EventStream binary response with
+   * exponential backoff retry (MITM-style) for transient errors.
    */
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, streamWatchdogEnabled = true }) {
     const url = this.buildUrl(model, stream, 0);
     const transformedBody = this.transformRequest(model, body, stream, credentials);
     
-    // Merge default retry config with provider-specific config
-    const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
+    // Resolve max retry count: per-account → global setting → default
+    const maxRetries = credentials?.kiroRetryCount ?? DEFAULT_KIRO_RETRY_COUNT;
     let retryAttempts = 0;
 
     while (true) {
       const headers = this.buildHeaders(credentials, stream);
 
       // Abort if upstream doesn't return response headers within FETCH_CONNECT_TIMEOUT_MS.
-      // Mirrors BaseExecutor.execute — without it a Kiro endpoint that accepts the TCP
-      // connection but never sends headers would hang handleChatCore's await forever
-      // (the stall watchdog isn't armed until the response body starts piping).
       const connectCtrl = new AbortController();
       const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), FETCH_CONNECT_TIMEOUT_MS);
       const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
@@ -73,15 +91,14 @@ export class KiroExecutor extends BaseExecutor {
         clearTimeout(connectTimer);
       } catch (error) {
         clearTimeout(connectTimer);
-        // Connect timeout is internal: convert to a retryable network error instead of
-        // propagating an AbortError, which the caller would misclassify as a 499 client abort.
+        // Connect timeout is internal: convert to a retryable network error
         const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
         if (isConnectTimeout) {
-          const { attempts: maxRetries, delayMs } = resolveRetryEntry(retryConfig[HTTP_STATUS.BAD_GATEWAY]);
           if (maxRetries > 0 && retryAttempts < maxRetries) {
             retryAttempts++;
-            log?.debug?.("RETRY", `connect timeout retry ${retryAttempts}/${maxRetries} after ${delayMs / 1000}s`);
-            await new Promise(resolve => setTimeout(resolve, delayMs));
+            const backoffMs = this._computeBackoff(retryAttempts);
+            log?.debug?.("RETRY", `connect timeout retry ${retryAttempts}/${maxRetries} after ${(backoffMs / 1000).toFixed(1)}s`);
+            await new Promise(resolve => setTimeout(resolve, backoffMs));
             continue;
           }
           throw new Error(`Kiro upstream connect timeout after ${FETCH_CONNECT_TIMEOUT_MS}ms`);
@@ -89,13 +106,41 @@ export class KiroExecutor extends BaseExecutor {
         throw error;
       }
 
-      // Check if should retry based on status code
-      const { attempts: maxRetries, delayMs } = resolveRetryEntry(retryConfig[response.status]);
-      if (!response.ok && maxRetries > 0 && retryAttempts < maxRetries) {
-        retryAttempts++;
-        log?.debug?.("RETRY", `${response.status} retry ${retryAttempts}/${maxRetries} after ${delayMs / 1000}s`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-        continue;
+      // Check if this status code is retryable
+      if (!response.ok && KIRO_RETRYABLE_STATUSES.has(response.status)) {
+        // For 400, only retry known transient patterns
+        let isTransient400 = false;
+        if (response.status === 400) {
+          let bodyText = "";
+          try { bodyText = await response.clone().text(); } catch { /* ignore */ }
+          
+          if (!this._isRetryable400(bodyText)) {
+            // Genuine validation error — don't retry
+            return { response, url, headers, transformedBody };
+          }
+          isTransient400 = true;
+        }
+
+        if (maxRetries > 0 && retryAttempts < maxRetries) {
+          retryAttempts++;
+          const backoffMs = this._computeBackoff(retryAttempts);
+          log?.debug?.("RETRY", `${response.status} retry ${retryAttempts}/${maxRetries} after ${(backoffMs / 1000).toFixed(1)}s`);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+          continue;
+        }
+
+        // Retries exhausted — remap transient 400 to 429 so Claude Code CLI
+        // recognizes it as retryable (CLI only retries on 429/503, not 400)
+        if (isTransient400) {
+          const bodyText = await response.clone().text().catch(() => "");
+          const remappedResponse = new Response(bodyText, {
+            status: HTTP_STATUS.RATE_LIMITED,
+            statusText: "Too Many Requests",
+            headers: response.headers
+          });
+          log?.debug?.("RETRY", `400 → 429 remap after ${retryAttempts} retries (transient Kiro error)`);
+          return { response: remappedResponse, url, headers, transformedBody };
+        }
       }
 
       if (!response.ok) {
@@ -103,11 +148,19 @@ export class KiroExecutor extends BaseExecutor {
       }
 
       // Success - transform and return
-      // For Kiro, we need to transform the binary EventStream to SSE
-      // Create a TransformStream to convert binary to SSE text
       const transformedResponse = this.transformEventStreamToSSE(response, model, streamWatchdogEnabled);
       return { response: transformedResponse, url, headers, transformedBody };
     }
+  }
+
+  /**
+   * Compute exponential backoff with full jitter (MITM-style).
+   * Formula: random in [0, min(cap, base * 2^(attempt-1))]
+   * Prevents thundering herd when multiple requests hit errors simultaneously.
+   */
+  _computeBackoff(attempt) {
+    const expCeiling = Math.min(KIRO_BACKOFF_CAP_MS, KIRO_BACKOFF_BASE_MS * Math.pow(2, attempt - 1));
+    return Math.floor(Math.random() * expCeiling) + KIRO_BACKOFF_BASE_MS / 2;
   }
 
   /**

@@ -58,6 +58,9 @@ export const DEFAULT_RETRY_CONFIG = {
 
 // Default 503 retry count for Antigravity executor (per-account before switching)
 export const DEFAULT_AG_503_RETRY_COUNT = 3;
+
+// Default retry count for Kiro executor (per-account before switching)
+export const DEFAULT_KIRO_RETRY_COUNT = 3;
 // Normalize a retry entry to { attempts, delayMs }
 export function resolveRetryEntry(entry) {
   if (entry == null) return { attempts: 0, delayMs: RETRY_CONFIG.delayMs };
