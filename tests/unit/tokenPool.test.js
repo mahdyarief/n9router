@@ -421,7 +421,7 @@ describe("isTokenSwapEnabled", () => {
   });
   afterEach(() => tmp.cleanup());
 
-  it("returns true when settings.tokenSwapEnabled=true AND active connections exist", () => {
+  it("returns true when settings.tokenSwapEnabled=true and provider connections exist", () => {
     fs.writeFileSync(tmp.dbPath, JSON.stringify({
       providerConnections: [makeConn()],
       settings: { tokenSwapEnabled: true },
@@ -429,12 +429,20 @@ describe("isTokenSwapEnabled", () => {
     expect(pool.isTokenSwapEnabled("antigravity")).toBe(true);
   });
 
-  it("returns false when settings.tokenSwapEnabled=true but no active connections", () => {
+  it("returns true when settings.tokenSwapEnabled=true even if current connections are inactive", () => {
+    fs.writeFileSync(tmp.dbPath, JSON.stringify({
+      providerConnections: [makeConn({ isActive: false })],
+      settings: { tokenSwapEnabled: true },
+    }));
+    expect(pool.isTokenSwapEnabled("antigravity")).toBe(true);
+  });
+
+  it("returns true when settings.tokenSwapEnabled=true even if provider has no configured connections", () => {
     fs.writeFileSync(tmp.dbPath, JSON.stringify({
       providerConnections: [],
       settings: { tokenSwapEnabled: true },
     }));
-    expect(pool.isTokenSwapEnabled("antigravity")).toBe(false);
+    expect(pool.isTokenSwapEnabled("antigravity")).toBe(true);
   });
 
   it("returns false when active connections exist but tokenSwapEnabled not set", () => {
@@ -452,12 +460,12 @@ describe("isTokenSwapEnabled", () => {
     expect(pool.isTokenSwapEnabled("antigravity")).toBe(false);
   });
 
-  it("returns false for unknown provider even when enabled", () => {
+  it("returns true for unknown provider when the global token-swap toggle is enabled", () => {
     fs.writeFileSync(tmp.dbPath, JSON.stringify({
       providerConnections: [makeConn()],
       settings: { tokenSwapEnabled: true },
     }));
-    expect(pool.isTokenSwapEnabled("github-copilot")).toBe(false);
+    expect(pool.isTokenSwapEnabled("github-copilot")).toBe(true);
   });
 
   it("returns false when db.json does not exist", () => {

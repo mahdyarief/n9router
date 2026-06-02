@@ -430,20 +430,11 @@ function getConnectionLabel(connection) {
   return connection.name || connection.id.slice(0, 8);
 }
 
-function isTokenSwapEnabled(provider) {
+function isTokenSwapEnabled() {
   try {
     if (!fs.existsSync(DB_FILE)) return false;
     const db = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-    // Explicit toggle — must be enabled in settings
-    if (!db.settings?.tokenSwapEnabled) {
-      return false;
-    }
-    const active = getActiveConnections(provider);
-    if (active.length === 0) {
-      log(`⚙️ [token-pool] swap enabled in settings but no active ${provider} connections`);
-      return false;
-    }
-    return true;
+    return !!db.settings?.tokenSwapEnabled;
   } catch { return false; }
 }
 
