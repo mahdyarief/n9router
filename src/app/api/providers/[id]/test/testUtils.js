@@ -227,13 +227,13 @@ async function refreshOAuthToken(connection) {
 }
 
 function isTokenExpired(connection) {
-  if (!connection.expiresAt) return false;
+  if (!connection.expiresAt) return true;
   const expiresAt = new Date(connection.expiresAt).getTime();
   const buffer = 5 * 60 * 1000;
   return expiresAt <= Date.now() + buffer;
 }
 
-async function testOAuthConnection(connection, effectiveProxy = null) {
+async function testOAuthConnection(connection, effectiveProxy = null, options = {}) {
   const config = OAUTH_TEST_CONFIG[connection.provider];
   if (!config) return { valid: false, error: "Provider test not supported", refreshed: false };
   if (!connection.accessToken) return { valid: false, error: "No access token", refreshed: false };
@@ -248,7 +248,16 @@ async function testOAuthConnection(connection, effectiveProxy = null) {
   let newTokens = null;
 
   const tokenExpired = isTokenExpired(connection);
-  if (config.refreshable && tokenExpired && connection.refreshToken) {
+  if (config.refreshable && options.forceRefresh && connection.refreshToken) {
+    const tokens = await refreshOAuthToken(connection);
+    if (tokens?.accessToken) {
+      accessToken = tokens.accessToken;
+      refreshed = true;
+      newTokens = tokens;
+    } else {
+      return { valid: false, error: "Token refresh failed", refreshed: false };
+    }
+  } else if (config.refreshable && tokenExpired && connection.refreshToken) {
     const tokens = await refreshOAuthToken(connection);
     if (tokens) {
       accessToken = tokens.accessToken;
@@ -619,7 +628,7 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
 /**
  * Test a single connection by ID, update DB, and return result.
  */
-export async function testSingleConnection(id) {
+export async function testSingleConnection(id, options = {}) {
   const connection = await getProviderConnectionById(id);
   if (!connection) return { valid: false, error: "Connection not found", latencyMs: 0, testedAt: new Date().toISOString() };
 
@@ -644,7 +653,7 @@ export async function testSingleConnection(id) {
   if (connection.authType === "apikey" || connection.authType === "cookie") {
     result = await testApiKeyConnection(connection, effectiveProxy);
   } else {
-    result = await testOAuthConnection(connection, effectiveProxy);
+    result = await testOAuthConnection(connection, effectiveProxy, options);
   }
 
   const latencyMs = Date.now() - start;
@@ -665,5 +674,5 @@ export async function testSingleConnection(id) {
 
   await updateProviderConnection(id, updateData);
 
-  return { valid: result.valid, error: result.error, latencyMs, testedAt: new Date().toISOString() };
+  return { valid: result.valid, error: result.error, refreshed: result.refreshed || false, latencyMs, testedAt: new Date().toISOString() };
 }

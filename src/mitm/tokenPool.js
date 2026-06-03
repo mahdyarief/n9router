@@ -531,7 +531,7 @@ function markAccountUsed(connId) {
 // checks expiry, refreshes token automatically, then returns the
 // latest persisted connection snapshot for the current request.
 
-async function runConnectionTest(connection) {
+async function runConnectionTest(connection, options = {}) {
   return await new Promise((resolve) => {
     if (!connection?.id) {
       resolve({ connection, refreshed: false, valid: false });
@@ -539,10 +539,14 @@ async function runConnectionTest(connection) {
     }
 
     let responseBody = "";
+    const payload = options.forceRefresh ? JSON.stringify({ forceRefresh: true }) : "";
+    const headers = payload
+      ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) }
+      : undefined;
 
     try {
       const req = http.request(
-        { hostname: "127.0.0.1", port: ROUTER_PORT, path: `/api/providers/${connection.id}/test`, method: "POST" },
+        { hostname: "127.0.0.1", port: ROUTER_PORT, path: `/api/providers/${connection.id}/test`, method: "POST", headers },
         (res) => {
           res.on("data", (chunk) => {
             responseBody += chunk.toString();
@@ -566,6 +570,7 @@ async function runConnectionTest(connection) {
         }
       );
       req.on("error", () => resolve({ connection, refreshed: false, valid: false }));
+      if (payload) req.write(payload);
       req.end();
     } catch {
       resolve({ connection, refreshed: false, valid: false });
@@ -574,11 +579,15 @@ async function runConnectionTest(connection) {
 }
 
 async function triggerRefreshIfNeeded(connection) {
-  if (!connection?.expiresAt || !connection?.refreshToken) return connection;
-  const expiresAt = new Date(connection.expiresAt).getTime();
-  if (Date.now() + TOKEN_EXPIRY_BUFFER_MS < expiresAt) return connection;
+  if (!connection?.refreshToken) return connection;
 
-  log(`🔄 [token-pool] near-expiry refresh → ${getConnectionLabel(connection).slice(0, 20)}`);
+  const hasExpiry = !!connection?.expiresAt;
+  const expiresAt = hasExpiry ? new Date(connection.expiresAt).getTime() : 0;
+  const isExpired = !hasExpiry || (Date.now() + TOKEN_EXPIRY_BUFFER_MS >= expiresAt);
+
+  if (!isExpired) return connection;
+
+  log(`🔄 [token-pool] ${!hasExpiry ? "missing-expiry" : "near-expiry"} refresh → ${getConnectionLabel(connection).slice(0, 20)}`);
   const result = await runConnectionTest(connection);
   if (result.refreshed) {
     log(`♻️ [token-pool] refreshed token applied → ${getConnectionLabel(connection).slice(0, 20)}`);
@@ -592,7 +601,7 @@ async function forceRefreshConnection(connection) {
   }
 
   log(`🔄 [token-pool] auth refresh → ${getConnectionLabel(connection).slice(0, 20)}`);
-  const result = await runConnectionTest(connection);
+  const result = await runConnectionTest(connection, { forceRefresh: true });
   if (result.refreshed) {
     log(`♻️ [token-pool] refreshed token applied → ${getConnectionLabel(connection).slice(0, 20)}`);
   }

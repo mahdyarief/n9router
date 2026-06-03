@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.4.42 (2026-06-03)
+
+### Fixes
+
+- **OAuth token refresh reliability**: MITM token-pool refresh now handles connections with a refresh token but no `expiresAt`, and forced auth refreshes bypass still-valid expiry timestamps.
+- **Connection test refresh flow**: Provider connection tests can now request a forced refresh and report whether new tokens were applied.
+- **Token Rotation account toggles**: Toggling a pool account active/inactive no longer refetches quota data for every account.
+
+### Tests
+
+- Added token-pool coverage for missing-expiry refreshes and forced refresh requests.
+
+## v0.4.41 (2026-06-03)
+
+### Improvements
+
+- **Token-swap toggle behavior**: Token swap now follows the global `tokenSwapEnabled` setting without requiring currently active provider connections.
+
+### Fixes
+
+- **Manual update command**: Corrected the dashboard update instructions to restart with `n9router` instead of `9router`.
+
+### Tests
+
+- Updated token-pool coverage for the global token-swap toggle behavior.
+
 ## v0.4.40 (2026-06-02)
 
 ### Fixes

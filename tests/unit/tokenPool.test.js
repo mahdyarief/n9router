@@ -565,13 +565,48 @@ describe("triggerRefreshIfNeeded", () => {
     tmp.cleanup();
   });
 
-  it("does not make HTTP request when no expiresAt set", async () => {
+  it("does not make HTTP request when no refreshToken exists (even if expiresAt is null)", async () => {
     httpSpy = vi.spyOn(http, "request").mockReturnValue({ on: vi.fn(), end: vi.fn() });
     pool = loadTokenPool(tmp.DATA_DIR);
-    const conn = makeConn({ expiresAt: null });
+    const conn = makeConn({ expiresAt: null, refreshToken: null });
     const result = await pool.triggerRefreshIfNeeded(conn);
     expect(httpSpy).not.toHaveBeenCalled();
     expect(result).toEqual(conn);
+  });
+
+  it("fires HTTP request when expiresAt is not set but refreshToken exists", async () => {
+    const mockRes = {
+      on: vi.fn((event, handler) => {
+        if (event === "end") handler();
+        return mockRes;
+      }),
+    };
+    const mockReq = {
+      on: vi.fn(),
+      end: vi.fn(() => {
+        const db = JSON.parse(fs.readFileSync(tmp.dbPath, "utf-8"));
+        db.providerConnections[0].accessToken = "tok-new-from-null-expiry";
+        db.providerConnections[0].expiresAt = new Date(Date.now() + 3600_000).toISOString();
+        fs.writeFileSync(tmp.dbPath, JSON.stringify(db));
+        httpSpy.mock.calls[0][1](mockRes);
+      }),
+    };
+    httpSpy = vi.spyOn(http, "request").mockReturnValue(mockReq);
+    pool = loadTokenPool(tmp.DATA_DIR);
+
+    const conn = makeConn({ id: "missing-expiry-conn", expiresAt: null, refreshToken: "reftok" });
+    fs.writeFileSync(tmp.dbPath, JSON.stringify({ providerConnections: [conn] }));
+    const result = await pool.triggerRefreshIfNeeded(conn);
+
+    expect(httpSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        path: `/api/providers/missing-expiry-conn/test`,
+      }),
+      expect.any(Function)
+    );
+    expect(mockReq.end).toHaveBeenCalled();
+    expect(result.accessToken).toBe("tok-new-from-null-expiry");
   });
 
   it("does not make HTTP request when token expires far in future (>5min)", async () => {
@@ -652,6 +687,60 @@ describe("triggerRefreshIfNeeded", () => {
 
     expect(httpSpy).toHaveBeenCalled();
     expect(result.id).toBe("expired-conn");
+  });
+});
+
+describe("forceRefreshConnection", () => {
+  let tmp, pool, httpSpy;
+
+  beforeEach(() => {
+    tmp = createTempDb();
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    httpSpy?.mockRestore();
+    tmp.cleanup();
+  });
+
+  it("forces refresh even when stored expiresAt is still in the future", async () => {
+    const mockRes = {
+      on: vi.fn((event, handler) => {
+        if (event === "data") handler(Buffer.from(JSON.stringify({ valid: true, refreshed: true })));
+        if (event === "end") handler();
+        return mockRes;
+      }),
+    };
+    const mockReq = {
+      on: vi.fn(),
+      write: vi.fn(),
+      end: vi.fn(() => {
+        const db = JSON.parse(fs.readFileSync(tmp.dbPath, "utf-8"));
+        db.providerConnections[0].accessToken = "tok-forced-new";
+        db.providerConnections[0].expiresAt = new Date(Date.now() + 3600_000).toISOString();
+        fs.writeFileSync(tmp.dbPath, JSON.stringify(db));
+        httpSpy.mock.calls[0][1](mockRes);
+      }),
+    };
+    httpSpy = vi.spyOn(http, "request").mockReturnValue(mockReq);
+    pool = loadTokenPool(tmp.DATA_DIR);
+
+    const futureDate = new Date(Date.now() + 30 * 60_000).toISOString();
+    const conn = makeConn({ id: "force-refresh-me", expiresAt: futureDate, refreshToken: "reftok" });
+    fs.writeFileSync(tmp.dbPath, JSON.stringify({ providerConnections: [conn] }));
+
+    const result = await pool.forceRefreshConnection(conn);
+
+    expect(httpSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        path: `/api/providers/force-refresh-me/test`,
+        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+      }),
+      expect.any(Function)
+    );
+    expect(mockReq.write).toHaveBeenCalledWith(JSON.stringify({ forceRefresh: true }));
+    expect(result.refreshed).toBe(true);
+    expect(result.connection.accessToken).toBe("tok-forced-new");
   });
 });
 

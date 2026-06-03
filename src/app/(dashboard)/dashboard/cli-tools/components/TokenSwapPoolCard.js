@@ -296,10 +296,12 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
     (c) => c.isActive !== false
   );
   const activeCount = activeAccounts.length;
-  const providerAccountsKey = providerAccounts.map((acc) => `${acc.id}:${acc.isActive === false ? "0" : "1"}`).join("|");
+  const providerAccountsKey = providerAccounts.map((acc) => acc.id).join("|");
   const preferredAccountId = getPreferredAccountId(activeAccounts, strategy);
 
   // Auto-fetch quotas when enabled and accounts available
+  // Keep this keyed to account identity only. Active/inactive toggles should not
+  // fan out into quota requests for every account.
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (enabled && providerAccounts.length > 0) {
