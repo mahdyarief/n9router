@@ -810,9 +810,11 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
                               next
                             </span>
                           )}
-                          <Badge variant={acc.isActive === false ? "default" : "success"} size="sm">
-                            {acc.isActive === false ? "disabled" : "active"}
-                          </Badge>
+                          <span title={acc.isActive === false ? "Disabled - excluded from token rotation." : "Included in token rotation."}>
+                            <Badge variant={acc.isActive === false ? "default" : "success"} size="sm">
+                              {acc.isActive === false ? "disabled" : "active"}
+                            </Badge>
+                          </span>
                         </div>
                         <div className="mt-1 flex items-center gap-2 flex-wrap text-[10px] text-text-muted">
                           <span>Priority #{acc.priority ?? "-"}</span>
@@ -875,16 +877,7 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
                       </div>
                     </div>
                     <div className="mt-2 pl-6">
-                      {acc.isActive === false ? (
-                        <div className="flex flex-col gap-1">
-                          <div className="text-[10px] text-text-muted">
-                            Disabled; excluded from token rotation.
-                          </div>
-                          {renderAccountQuota(acc.id)}
-                        </div>
-                      ) : (
-                        renderAccountQuota(acc.id)
-                      )}
+                      {renderAccountQuota(acc.id)}
                       {/* Health pulse — last 100 call results as colored squares */}
                       {renderHealthDots(acc.email || acc.id)}
                     </div>
