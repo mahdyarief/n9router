@@ -26,14 +26,14 @@ export async function GET() {
         url: "https://paypal.me/nightwalker89",
         qr: "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=https://paypal.me/nightwalker89",
       },
-      // {
-      //   id: "momo",
-      //   label: "MoMo",
-      //   description: "Scan QR with MoMo app (Vietnam)",
-      //   icon: "qr_code_2",
-      //   color: "#A50064",
-      //   qr: "https://9router.com/images/momo.jpg",
-      // },
+      {
+        id: "momo",
+        label: "MoMo",
+        description: "Scan QR with MoMo app (Vietnam)",
+        icon: "qr_code_2",
+        color: "#A50064",
+        qr: "https://www.image2url.com/r2/default/images/1780594518402-625cc279-962d-4332-aa97-51a1df510234.png",
+      },
     ],
   });
 }
