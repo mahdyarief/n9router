@@ -7,11 +7,18 @@
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
+const crypto = require("crypto");
+const { machineIdSync } = require("node-machine-id");
 const { DATA_DIR } = require("./paths");
 const { log } = require("./logger");
 const { updateJsonFileSync } = require("../lib/dbFileSafety.js");
 
 const DB_FILE = path.join(DATA_DIR, "db.json");
+const MACHINE_ID_FILE = path.join(DATA_DIR, "machine-id");
+const AUTH_DIR = path.join(DATA_DIR, "auth");
+const CLI_SECRET_FILE = path.join(AUTH_DIR, "cli-secret");
+const CLI_TOKEN_HEADER = "x-9r-cli-token";
+const CLI_TOKEN_SALT = "9r-cli-auth";
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000; // refresh 5min before expiry
 const ROUTER_PORT = process.env.PORT || 20128;
 const DEFAULT_COOLDOWN_MS = 2 * 60 * 1000;
@@ -19,6 +26,7 @@ const DEFAULT_AUTH_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_STRIKE_THRESHOLD = 3; // consecutive 429s before hard cooldown
 const CAPACITY_EXHAUSTED_COOLDOWN_MS = 60 * 1000;
 const SONNET_46_MODEL_KEY = "claude-sonnet-4-6";
+const REFRESH_RESPONSE_BODY_LIMIT = 500;
 // Must match DEFAULT_AG_503_RETRY_COUNT in open-sse/config/runtimeConfig.js
 const DEFAULT_503_RETRY_COUNT = 3;  // default 503 retries per account before switching
 
@@ -28,6 +36,10 @@ const authCooldownMap = {};    // { [connectionId]: expiresTimestamp } invalid_t
 const modelCooldownMap = {};   // { [connectionId]: { [model]: expiresTimestamp } }
 const strikeMap = {};          // { [connectionId]: consecutiveHitCount }
 const modelStrikeMap = {};     // { [connectionId]: { [model]: consecutiveHitCount } }
+const refreshRequestMap = new Map(); // { [connectionId:mode]: Promise<refreshResult> }
+let cachedRawMachineId = null;
+let cachedCliSecret = null;
+let cachedCliToken = null;
 // ── Strike + cooldown management ─────────────────────────────
 // Upstream often returns false-positive 429s. Instead of locking
 // an account on the first hit, we count consecutive strikes.
@@ -526,23 +538,92 @@ function markAccountUsed(connId) {
   }
 }
 
+function truncateRefreshBody(body) {
+  if (!body) return "";
+  return body.length > REFRESH_RESPONSE_BODY_LIMIT
+    ? `${body.slice(0, REFRESH_RESPONSE_BODY_LIMIT)}...`
+    : body;
+}
+
+function getRefreshPayloadError(payload) {
+  if (!payload) return null;
+  if (typeof payload.error === "string") return payload.error;
+  if (payload.error?.message) return payload.error.message;
+  if (typeof payload.error_description === "string") return payload.error_description;
+  if (typeof payload.message === "string") return payload.message;
+  return null;
+}
+
+function loadRawMachineId() {
+  if (cachedRawMachineId) return cachedRawMachineId;
+  try {
+    cachedRawMachineId = fs.readFileSync(MACHINE_ID_FILE, "utf8").trim();
+    if (cachedRawMachineId) return cachedRawMachineId;
+  } catch {}
+
+  try {
+    cachedRawMachineId = machineIdSync();
+  } catch {
+    cachedRawMachineId = crypto.randomUUID();
+  }
+
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(MACHINE_ID_FILE, cachedRawMachineId, { mode: 0o600 });
+  } catch {}
+
+  return cachedRawMachineId;
+}
+
+function loadCliSecret() {
+  if (cachedCliSecret) return cachedCliSecret;
+  try {
+    cachedCliSecret = fs.readFileSync(CLI_SECRET_FILE, "utf8").trim();
+    if (cachedCliSecret) return cachedCliSecret;
+  } catch {}
+
+  cachedCliSecret = crypto.randomBytes(32).toString("hex");
+  try {
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
+    fs.writeFileSync(CLI_SECRET_FILE, cachedCliSecret, { mode: 0o600 });
+  } catch {}
+
+  return cachedCliSecret;
+}
+
+function getInternalCliToken() {
+  if (!cachedCliToken) {
+    const raw = loadRawMachineId();
+    const secret = loadCliSecret();
+    cachedCliToken = crypto.createHash("sha256").update(raw + CLI_TOKEN_SALT + secret).digest("hex").substring(0, 16);
+  }
+  return cachedCliToken;
+}
+
+function buildConnectionTestHeaders(payload) {
+  const headers = { [CLI_TOKEN_HEADER]: getInternalCliToken() };
+  if (payload) {
+    headers["Content-Type"] = "application/json";
+    headers["Content-Length"] = Buffer.byteLength(payload);
+  }
+  return headers;
+}
+
 // ── Token refresh trigger (refresh + reload persisted token) ─
 // Calls 9Router's existing POST /api/providers/:id/test which
 // checks expiry, refreshes token automatically, then returns the
 // latest persisted connection snapshot for the current request.
 
-async function runConnectionTest(connection, options = {}) {
+async function runConnectionTestRequest(connection, options = {}) {
   return await new Promise((resolve) => {
     if (!connection?.id) {
-      resolve({ connection, refreshed: false, valid: false });
+      resolve({ connection, refreshed: false, valid: false, error: "Missing connection id", errorType: "missing_connection_id" });
       return;
     }
 
     let responseBody = "";
     const payload = options.forceRefresh ? JSON.stringify({ forceRefresh: true }) : "";
-    const headers = payload
-      ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) }
-      : undefined;
+    const headers = buildConnectionTestHeaders(payload);
 
     try {
       const req = http.request(
@@ -553,29 +634,68 @@ async function runConnectionTest(connection, options = {}) {
           });
           res.on("end", () => {
             let payload = {};
+            let parseError = null;
             try {
               payload = JSON.parse(responseBody || "{}");
-            } catch {
+            } catch (e) {
+              parseError = e;
               payload = {};
             }
 
             const refreshedConnection = getConnectionById(connection.id);
             const tokenChanged = !!(refreshedConnection?.accessToken && refreshedConnection.accessToken !== connection.accessToken);
+            const payloadError = getRefreshPayloadError(payload);
             resolve({
               connection: refreshedConnection || connection,
               refreshed: !!payload.refreshed || tokenChanged,
               valid: !!payload.valid,
+              statusCode: res.statusCode || 0,
+              error: payloadError || (parseError ? `Invalid JSON response: ${parseError.message}` : null),
+              errorType: payloadError ? "api_error" : (parseError ? "parse_error" : null),
+              responseBody: payloadError || parseError ? truncateRefreshBody(responseBody) : undefined,
             });
           });
         }
       );
-      req.on("error", () => resolve({ connection, refreshed: false, valid: false }));
+      req.on("error", (e) => resolve({
+        connection,
+        refreshed: false,
+        valid: false,
+        error: e.message,
+        errorType: "request_error",
+      }));
       if (payload) req.write(payload);
       req.end();
-    } catch {
-      resolve({ connection, refreshed: false, valid: false });
+    } catch (e) {
+      resolve({
+        connection,
+        refreshed: false,
+        valid: false,
+        error: e.message,
+        errorType: "request_exception",
+      });
     }
   });
+}
+
+async function runConnectionTest(connection, options = {}) {
+  if (!connection?.id) {
+    return runConnectionTestRequest(connection, options);
+  }
+
+  const mode = options.forceRefresh ? "force" : "expiry";
+  const key = `${connection.id}:${mode}`;
+  const existing = refreshRequestMap.get(key);
+  if (existing) {
+    log(`⏳ [token-pool] waiting for in-flight ${mode} refresh → ${getConnectionLabel(connection).slice(0, 20)}`);
+    return await existing;
+  }
+
+  const promise = runConnectionTestRequest(connection, options).finally(() => {
+    refreshRequestMap.delete(key);
+  });
+  refreshRequestMap.set(key, promise);
+  return await promise;
 }
 
 async function triggerRefreshIfNeeded(connection) {
@@ -597,13 +717,18 @@ async function triggerRefreshIfNeeded(connection) {
 
 async function forceRefreshConnection(connection) {
   if (!connection?.refreshToken) {
-    return { connection, refreshed: false, valid: false };
+    return { connection, refreshed: false, valid: false, error: "No refresh token", errorType: "missing_refresh_token" };
   }
 
   log(`🔄 [token-pool] auth refresh → ${getConnectionLabel(connection).slice(0, 20)}`);
   const result = await runConnectionTest(connection, { forceRefresh: true });
   if (result.refreshed) {
     log(`♻️ [token-pool] refreshed token applied → ${getConnectionLabel(connection).slice(0, 20)}`);
+  } else {
+    const statusTag = result.statusCode ? ` status=${result.statusCode}` : "";
+    const errorTag = result.error ? ` error="${result.error}"` : "";
+    const typeTag = result.errorType ? ` type=${result.errorType}` : "";
+    log(`⚠️ [token-pool] auth refresh failed → ${getConnectionLabel(connection).slice(0, 20)}${statusTag}${typeTag}${errorTag}`);
   }
   return result;
 }

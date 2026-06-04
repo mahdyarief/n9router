@@ -111,6 +111,57 @@ function getPreferredAccountId(accounts, strategy) {
   return byOldest[0]?.id || null;
 }
 
+function formatCooldownDuration(untilMs, nowMs = Date.now()) {
+  const diffMs = untilMs - nowMs;
+  if (!Number.isFinite(diffMs) || diffMs <= 0) return null;
+
+  const totalSeconds = Math.ceil(diffMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+
+  if (hours) parts.push(`${hours}h`);
+  if (minutes || hours) parts.push(`${minutes}m`);
+  if (!hours && seconds) parts.push(`${seconds}s`);
+  if (parts.length === 0) parts.push("0s");
+
+  return parts.join(" ");
+}
+
+function getAccountCooldownMeta(acc, nowMs = Date.now()) {
+  if (!acc) return null;
+
+  const candidates = [];
+  if (acc.rateLimitedUntil) {
+    candidates.push({ type: "account", until: acc.rateLimitedUntil });
+  }
+
+  Object.entries(acc).forEach(([key, value]) => {
+    if (key.startsWith("modelLock_") && value) {
+      candidates.push({ type: "model", until: value });
+    }
+  });
+
+  const active = candidates
+    .map((candidate) => ({
+      ...candidate,
+      untilMs: new Date(candidate.until).getTime(),
+    }))
+    .filter((candidate) => Number.isFinite(candidate.untilMs) && candidate.untilMs > nowMs)
+    .sort((a, b) => a.untilMs - b.untilMs)[0];
+
+  if (!active) return null;
+
+  const duration = formatCooldownDuration(active.untilMs, nowMs);
+  if (!duration) return null;
+
+  return {
+    duration,
+    title: `${active.type === "model" ? "Model" : "Account"} cooldown until ${new Date(active.untilMs).toLocaleString()}`,
+  };
+}
+
 /**
  * Token Swap Pool Card — standalone card for token rotation mode.
  */
@@ -132,6 +183,7 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
   const retryCount503TimerRef = useRef(null); // debounce timer for global 503 retry save
   const accountRetryTimersRef = useRef({}); // debounce timers for per-account 503 retry saves
   const [healthData, setHealthData] = useState({}); // { [connId]: HealthEvent[] } — last 100 calls per account
+  const [cooldownNow, setCooldownNow] = useState(Date.now());
 
   const fetchEnabled = useCallback(async () => {
     try {
@@ -297,7 +349,26 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
   );
   const activeCount = activeAccounts.length;
   const providerAccountsKey = providerAccounts.map((acc) => acc.id).join("|");
+  const providerCooldownKey = providerAccounts
+    .map((acc) => {
+      const modelLocks = Object.entries(acc)
+        .filter(([key, value]) => key.startsWith("modelLock_") && value)
+        .map(([key, value]) => `${key}:${value}`)
+        .sort()
+        .join(",");
+      return `${acc.id}:${acc.rateLimitedUntil || ""}:${modelLocks}`;
+    })
+    .join("|");
   const preferredAccountId = getPreferredAccountId(activeAccounts, strategy);
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    const hasCooldown = providerAccounts.some((acc) => getAccountCooldownMeta(acc));
+    if (!hasCooldown) return;
+
+    const interval = setInterval(() => setCooldownNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [providerCooldownKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-fetch quotas when enabled and accounts available
   // Keep this keyed to account identity only. Active/inactive toggles should not
@@ -784,6 +855,7 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
               <>
                 {providerAccounts.map((acc) => {
                   const accountType = getResolvedAccountType(acc);
+                  const cooldownMeta = getAccountCooldownMeta(acc, cooldownNow);
                   return (
                   <div
                     key={acc.id}
@@ -815,6 +887,14 @@ export default function TokenSwapPoolCard({ tool, connections = [], serverRunnin
                               {acc.isActive === false ? "disabled" : "active"}
                             </Badge>
                           </span>
+                          {cooldownMeta && (
+                            <span
+                              className="text-[9px] font-medium text-amber-300 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded shrink-0"
+                              title={cooldownMeta.title}
+                            >
+                              cooldown {cooldownMeta.duration}
+                            </span>
+                          )}
                         </div>
                         <div className="mt-1 flex items-center gap-2 flex-wrap text-[10px] text-text-muted">
                           <span>Priority #{acc.priority ?? "-"}</span>

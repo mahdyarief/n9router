@@ -17,6 +17,7 @@ import { createRequire } from "module";
 import os from "os";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,14 @@ function createTempDb(conns = []) {
     dbPath,
     cleanup: () => fs.rmSync(tmpDir, { recursive: true, force: true }),
   };
+}
+
+function seedCliTokenFiles(DATA_DIR, raw = "test-machine-id", secret = "test-cli-secret") {
+  fs.writeFileSync(path.join(DATA_DIR, "machine-id"), raw);
+  const authDir = path.join(DATA_DIR, "auth");
+  fs.mkdirSync(authDir, { recursive: true });
+  fs.writeFileSync(path.join(authDir, "cli-secret"), secret);
+  return crypto.createHash("sha256").update(raw + "9r-cli-auth" + secret).digest("hex").substring(0, 16);
 }
 
 /** Load a fresh (isolated) copy of tokenPool.js for each test */
@@ -594,7 +603,7 @@ describe("triggerRefreshIfNeeded", () => {
     httpSpy = vi.spyOn(http, "request").mockReturnValue(mockReq);
     pool = loadTokenPool(tmp.DATA_DIR);
 
-    const conn = makeConn({ id: "missing-expiry-conn", expiresAt: null, refreshToken: "reftok" });
+    const conn = makeConn({ id: "missing-expiry-conn", provider: "codex", expiresAt: null, refreshToken: "reftok" });
     fs.writeFileSync(tmp.dbPath, JSON.stringify({ providerConnections: [conn] }));
     const result = await pool.triggerRefreshIfNeeded(conn);
 
@@ -649,7 +658,7 @@ describe("triggerRefreshIfNeeded", () => {
     pool = loadTokenPool(tmp.DATA_DIR);
 
     const nearExpiry = new Date(Date.now() + 3 * 60_000).toISOString(); // 3 min
-    const conn = makeConn({ id: "refresh-me", expiresAt: nearExpiry, refreshToken: "reftok" });
+    const conn = makeConn({ id: "refresh-me", provider: "codex", expiresAt: nearExpiry, refreshToken: "reftok" });
     fs.writeFileSync(tmp.dbPath, JSON.stringify({ providerConnections: [conn] }));
     const result = await pool.triggerRefreshIfNeeded(conn);
 
@@ -662,6 +671,43 @@ describe("triggerRefreshIfNeeded", () => {
     );
     expect(mockReq.end).toHaveBeenCalled();
     expect(result.accessToken).toBe("tok-new");
+  });
+
+  it("sends internal CLI token when refreshing Antigravity near-expiry tokens through the provider test route", async () => {
+    const cliToken = seedCliTokenFiles(tmp.DATA_DIR);
+    const mockRes = {
+      on: vi.fn((event, handler) => {
+        if (event === "end") handler();
+        return mockRes;
+      }),
+    };
+    const mockReq = {
+      on: vi.fn(),
+      end: vi.fn(() => {
+        const db = JSON.parse(fs.readFileSync(tmp.dbPath, "utf-8"));
+        db.providerConnections[0].accessToken = "tok-ag-new";
+        fs.writeFileSync(tmp.dbPath, JSON.stringify(db));
+        httpSpy.mock.calls[0][1](mockRes);
+      }),
+    };
+    httpSpy = vi.spyOn(http, "request").mockReturnValue(mockReq);
+    pool = loadTokenPool(tmp.DATA_DIR);
+
+    const nearExpiry = new Date(Date.now() + 3 * 60_000).toISOString();
+    const conn = makeConn({ id: "antigravity-near-expiry", expiresAt: nearExpiry, refreshToken: "ag-refresh" });
+    fs.writeFileSync(tmp.dbPath, JSON.stringify({ providerConnections: [conn] }));
+
+    const result = await pool.triggerRefreshIfNeeded(conn);
+
+    expect(httpSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        path: "/api/providers/antigravity-near-expiry/test",
+        headers: expect.objectContaining({ "x-9r-cli-token": cliToken }),
+      }),
+      expect.any(Function)
+    );
+    expect(result.accessToken).toBe("tok-ag-new");
   });
 
   it("fires HTTP request when token is already expired", async () => {
@@ -681,12 +727,51 @@ describe("triggerRefreshIfNeeded", () => {
     pool = loadTokenPool(tmp.DATA_DIR);
 
     const pastDate = new Date(Date.now() - 60_000).toISOString(); // 1 min ago
-    const conn = makeConn({ id: "expired-conn", expiresAt: pastDate, refreshToken: "reftok" });
+    const conn = makeConn({ id: "expired-conn", provider: "codex", expiresAt: pastDate, refreshToken: "reftok" });
     fs.writeFileSync(tmp.dbPath, JSON.stringify({ providerConnections: [conn] }));
     const result = await pool.triggerRefreshIfNeeded(conn);
 
     expect(httpSpy).toHaveBeenCalled();
     expect(result.id).toBe("expired-conn");
+  });
+
+  it("waits on one in-flight expiry refresh for concurrent requests", async () => {
+    let responseCallback;
+    const mockRes = {
+      on: vi.fn((event, handler) => {
+        if (event === "data") handler(Buffer.from(JSON.stringify({ valid: true, refreshed: true })));
+        if (event === "end") handler();
+        return mockRes;
+      }),
+    };
+    const mockReq = {
+      on: vi.fn(),
+      end: vi.fn(),
+    };
+    httpSpy = vi.spyOn(http, "request").mockImplementation((options, callback) => {
+      responseCallback = callback;
+      return mockReq;
+    });
+    pool = loadTokenPool(tmp.DATA_DIR);
+
+    const nearExpiry = new Date(Date.now() + 3 * 60_000).toISOString();
+    const conn = makeConn({ id: "concurrent-refresh", provider: "codex", expiresAt: nearExpiry, refreshToken: "reftok" });
+    fs.writeFileSync(tmp.dbPath, JSON.stringify({ providerConnections: [conn] }));
+
+    const first = pool.triggerRefreshIfNeeded(conn);
+    const second = pool.triggerRefreshIfNeeded(conn);
+
+    expect(httpSpy).toHaveBeenCalledTimes(1);
+
+    const db = JSON.parse(fs.readFileSync(tmp.dbPath, "utf-8"));
+    db.providerConnections[0].accessToken = "tok-shared-refresh";
+    db.providerConnections[0].expiresAt = new Date(Date.now() + 3600_000).toISOString();
+    fs.writeFileSync(tmp.dbPath, JSON.stringify(db));
+    responseCallback(mockRes);
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.accessToken).toBe("tok-shared-refresh");
+    expect(secondResult.accessToken).toBe("tok-shared-refresh");
   });
 });
 
@@ -702,7 +787,8 @@ describe("forceRefreshConnection", () => {
     tmp.cleanup();
   });
 
-  it("forces refresh even when stored expiresAt is still in the future", async () => {
+  it("forces refresh through the provider test route with internal CLI token", async () => {
+    const cliToken = seedCliTokenFiles(tmp.DATA_DIR);
     const mockRes = {
       on: vi.fn((event, handler) => {
         if (event === "data") handler(Buffer.from(JSON.stringify({ valid: true, refreshed: true })));
@@ -733,14 +819,71 @@ describe("forceRefreshConnection", () => {
     expect(httpSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "POST",
-        path: `/api/providers/force-refresh-me/test`,
-        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+        path: "/api/providers/force-refresh-me/test",
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          "x-9r-cli-token": cliToken,
+        }),
       }),
       expect.any(Function)
     );
     expect(mockReq.write).toHaveBeenCalledWith(JSON.stringify({ forceRefresh: true }));
     expect(result.refreshed).toBe(true);
     expect(result.connection.accessToken).toBe("tok-forced-new");
+  });
+
+  it("returns API refresh failure details when the provider test endpoint fails", async () => {
+    const mockRes = {
+      statusCode: 500,
+      on: vi.fn((event, handler) => {
+        if (event === "data") handler(Buffer.from(JSON.stringify({ valid: false, error: "Refresh token revoked" })));
+        if (event === "end") handler();
+        return mockRes;
+      }),
+    };
+    const mockReq = {
+      on: vi.fn(),
+      write: vi.fn(),
+      end: vi.fn(() => {
+        httpSpy.mock.calls[0][1](mockRes);
+      }),
+    };
+    httpSpy = vi.spyOn(http, "request").mockReturnValue(mockReq);
+    pool = loadTokenPool(tmp.DATA_DIR);
+
+    const conn = makeConn({ id: "force-refresh-fail", refreshToken: "reftok" });
+    fs.writeFileSync(tmp.dbPath, JSON.stringify({ providerConnections: [conn] }));
+
+    const result = await pool.forceRefreshConnection(conn);
+
+    expect(result.refreshed).toBe(false);
+    expect(result.valid).toBe(false);
+    expect(result.statusCode).toBe(500);
+    expect(result.errorType).toBe("api_error");
+    expect(result.error).toBe("Refresh token revoked");
+  });
+
+  it("returns request error details when the provider test request fails", async () => {
+    const mockReq = {
+      on: vi.fn((event, handler) => {
+        if (event === "error") handler(new Error("connect ECONNREFUSED 127.0.0.1:20128"));
+        return mockReq;
+      }),
+      write: vi.fn(),
+      end: vi.fn(),
+    };
+    httpSpy = vi.spyOn(http, "request").mockReturnValue(mockReq);
+    pool = loadTokenPool(tmp.DATA_DIR);
+
+    const conn = makeConn({ id: "force-refresh-request-error", refreshToken: "reftok" });
+    fs.writeFileSync(tmp.dbPath, JSON.stringify({ providerConnections: [conn] }));
+
+    const result = await pool.forceRefreshConnection(conn);
+
+    expect(result.refreshed).toBe(false);
+    expect(result.valid).toBe(false);
+    expect(result.errorType).toBe("request_error");
+    expect(result.error).toContain("ECONNREFUSED");
   });
 });
 

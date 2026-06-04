@@ -24,7 +24,13 @@ const { createAntigravityDebugContext, extractBearerToken, maskToken } = require
 const { getCertForDomain } = require("./cert/generate");
 const { buildInputOnlyRequestDetail, createTokenSwapUsageObserver, generateDetailId } = require("./usageTracker");
 const { pushHealthEvent, getLastEventStatus, migrateToEmailKeys } = require("./healthStore");
-const { getTokenSwapRetryType, isRetryableTokenSwapStatus } = require("./tokenSwapRetry");
+const {
+  formatLocalTimestamp,
+  getTokenLiveDuration,
+  getTokenSwapRetryType,
+  isRetryableAuthFailure,
+  isRetryableTokenSwapStatus,
+} = require("./tokenSwapRetry");
 
 const { applyRtkCompression } = require("./rtkCompressor");
 const { applyAntigravityIdeVersionOverride } = require("./antigravityIdeVersion");
@@ -33,6 +39,15 @@ const { getAntigravityHostRewriteTarget } = require("./mitmSettings");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 const LOCAL_PORT = 443;
 const INTERNAL_REQUEST_HEADER = { name: "x-request-source", value: "local" };
+const MAX_AUTH_REFRESH_RETRIES = 3;
+
+function getAuthRefreshFailureSummary(refreshResult) {
+  const details = [];
+  if (refreshResult?.statusCode) details.push(`status=${refreshResult.statusCode}`);
+  if (refreshResult?.errorType) details.push(`type=${refreshResult.errorType}`);
+  if (refreshResult?.error) details.push(`error="${refreshResult.error}"`);
+  return details.length ? ` (${details.join(" ")})` : "";
+}
 
 /**
  * Record account health event to disk (fire-and-forget, never blocks request flow).
@@ -225,20 +240,24 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
   for (let i = 0; i < connections.length; i++) {
     const originalConn = connections[i];
     let conn = await triggerRefreshIfNeeded(originalConn);
-    let authRefreshAttempted = false;
+    let authRefreshAttempts = 0;
 
     while (true) {
       const label = getConnectionLabel(conn);
       const modelTag = model ? ` model=${model}` : "";
       const posTag = connections.length > 1 ? ` [${i + 1}/${connections.length}]` : "";
-      const recencyTag = conn.lastUsedAt ? ` lastUsed=${conn.lastUsedAt}` : " lastUsed=never";
-      log(`🔑 [token-swap]${posTag} trying "${label}"${modelTag}${recencyTag}`);
+      const lastUsedLocal = formatLocalTimestamp(conn.lastUsedAt);
+      const recencyTag = lastUsedLocal ? ` lastUsed=${lastUsedLocal}` : " lastUsed=never";
+      const tokenLive = getTokenLiveDuration(conn);
+      log(`🔑 [token-swap]${posTag} trying "${label}"${modelTag}${recencyTag} ${tokenLive.label}`);
       debugContext?.log("token_swap.attempt", {
         strategy,
         position: i + 1,
         total: connections.length,
         lastUsedAt: conn.lastUsedAt || null,
+        lastUsedAtLocal: lastUsedLocal,
         accessTokenMasked: maskToken(conn.accessToken),
+        tokenLive,
         ...{
           connectionId: conn.id || null,
           accountEmail: conn.email || null,
@@ -410,16 +429,52 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
             return true;
           }
 
-          if (!authRefreshAttempted && conn.refreshToken) {
-            authRefreshAttempted = true;
-            log(`⚠️ [token-swap] "${label}" → 401 invalid_token, forcing refresh...`);
+          let refreshedForRetry = false;
+          if (!conn.refreshToken) {
+            log(`⚠️ [token-swap] "${label}" cannot refresh 401 invalid_token: no refresh token`);
+            debugContext?.log("token_swap.auth_refresh_failed", {
+              attempt: authRefreshAttempts,
+              maxAttempts: MAX_AUTH_REFRESH_RETRIES,
+              errorType: "missing_refresh_token",
+              error: "No refresh token",
+              connectionId: conn.id || null,
+            });
+          }
+          while (authRefreshAttempts < MAX_AUTH_REFRESH_RETRIES && conn.refreshToken) {
+            authRefreshAttempts += 1;
+            log(`⚠️ [token-swap] "${label}" → 401 invalid_token, forcing refresh ${authRefreshAttempts}/${MAX_AUTH_REFRESH_RETRIES}...`);
             const refreshResult = await forceRefreshConnection(conn);
             conn = refreshResult.connection || conn;
             if (refreshResult.refreshed) {
-              log(`↻ [token-swap] "${label}" refreshed, retrying same account...`);
-              continue;
+              const refreshedTokenLive = getTokenLiveDuration(conn);
+              log(`↻ [token-swap] "${label}" refreshed, retrying same account (${refreshedTokenLive.label}, auth retry ${authRefreshAttempts}/${MAX_AUTH_REFRESH_RETRIES})`);
+              debugContext?.log("token_swap.auth_refreshed", {
+                attempt: authRefreshAttempts,
+                maxAttempts: MAX_AUTH_REFRESH_RETRIES,
+                refreshedTokenLive,
+                connectionId: conn.id || null,
+              });
+              refreshedForRetry = true;
+              break;
+            }
+            log(`⚠️ [token-swap] "${label}" auth refresh ${authRefreshAttempts}/${MAX_AUTH_REFRESH_RETRIES} failed${getAuthRefreshFailureSummary(refreshResult)}`);
+            debugContext?.log("token_swap.auth_refresh_failed", {
+              attempt: authRefreshAttempts,
+              maxAttempts: MAX_AUTH_REFRESH_RETRIES,
+              refreshed: !!refreshResult.refreshed,
+              valid: !!refreshResult.valid,
+              statusCode: refreshResult.statusCode || null,
+              errorType: refreshResult.errorType || null,
+              error: refreshResult.error || null,
+              responseBody: refreshResult.responseBody || null,
+              connectionId: conn.id || null,
+            });
+            if (authRefreshAttempts < MAX_AUTH_REFRESH_RETRIES) {
+              await new Promise(r => setTimeout(r, Math.min(500 * authRefreshAttempts, 2000)));
             }
           }
+
+          if (refreshedForRetry) continue;
 
           setAuthCooldown(conn.id);
           lastRetryResponse = {
@@ -439,8 +494,8 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
               accountName: conn.name || null,
             },
           });
-          log(`⚠️ [token-swap] "${label}" → 401 invalid_token, trying next...`);
-          reportHealth(conn.email || conn.id, "fail", 1, model);
+          log(`⚠️ [token-swap] "${label}" → 401 invalid_token after ${authRefreshAttempts}/${MAX_AUTH_REFRESH_RETRIES} auth refresh attempt(s), trying next...`);
+          reportHealth(conn.email || conn.id, "fail", Math.max(1, authRefreshAttempts), model);
           break;
         }
 
@@ -558,36 +613,6 @@ async function tokenSwapForward(req, res, bodyBuffer, connections, model, strate
   }
 
   // All accounts exhausted with no retryable upstream response captured
-  return false;
-}
-
-function getHeaderValue(headers, name) {
-  const value = headers?.[String(name).toLowerCase()];
-  if (Array.isArray(value)) return value.join(", ");
-  return typeof value === "string" ? value : "";
-}
-
-function isRetryableAuthFailure(statusCode, headers, body) {
-  if (statusCode !== 401) return false;
-
-  const authHeader = getHeaderValue(headers, "www-authenticate").toLowerCase();
-  if (authHeader.includes("invalid_token")) return true;
-
-  try {
-    const parsed = JSON.parse(body || "{}");
-    const status = String(parsed?.error?.status || parsed?.status || "").toUpperCase();
-    const message = String(parsed?.error?.message || parsed?.message || "").toLowerCase();
-    if (status === "UNAUTHENTICATED") return true;
-    if (message.includes("invalid authentication credentials")) return true;
-    if (message.includes("invalid token")) return true;
-    if (message.includes("unauthenticated")) return true;
-  } catch {
-    const fallback = String(body || "").toLowerCase();
-    if (fallback.includes("invalid authentication credentials")) return true;
-    if (fallback.includes("invalid token")) return true;
-    if (fallback.includes("unauthenticated")) return true;
-  }
-
   return false;
 }
 
