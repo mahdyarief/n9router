@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.4.43 (2026-06-05)
+
+### Fixes
+
+- **MITM Antigravity auth refresh**: Token refresh now uses the existing internal CLI token header to call the provider test route, keeping a single refresh path while avoiding `401 Unauthorized` from dashboard auth.
+- **Auth refresh retries**: Token-swap auth refresh failures now retry up to 3 times before falling back to cooldown and next-account selection.
+- **Refresh diagnostics**: Refresh attempts now log token lifetime in local time and surface the underlying refresh failure details instead of giving a generic failure.
+
+### Improvements
+
+- **Token swap visibility**: Dashboard token pool cards now show cooldown timing next to the active badge for accounts under cooldown.
+
+### Tests
+
+- Added coverage for Antigravity internal refresh calls, auth refresh failure logging, and retry behavior.
+
 ## v0.4.42 (2026-06-03)
 
 ### Fixes
