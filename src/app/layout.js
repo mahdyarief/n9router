@@ -1,4 +1,4 @@
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 import "material-symbols/outlined.css";
 import "./globals.css";
 import { ThemeProvider } from "@/shared/components/ThemeProvider";
@@ -10,9 +10,13 @@ import { RuntimeI18nProvider } from "@/i18n/RuntimeI18nProvider";
 // Hook console immediately at module load time (server-side only, runs once)
 initConsoleLogCapture();
 
-const inter = Inter({
-  subsets: ["latin"],
+// Self-hosted to keep production/Docker builds fully offline (no build-time
+// fetch from fonts.googleapis.com, which fails in restricted CI environments).
+const inter = localFont({
+  src: "./fonts/Inter-latin.woff2",
   variable: "--font-inter",
+  display: "swap",
+  weight: "100 900",
 });
 
 export const metadata = {
