@@ -21,7 +21,21 @@ jobs:
       contents: write
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
+      docker_enabled: ${{ steps.guard.outputs.docker_enabled }}
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
+      - name: Check Docker Hub credentials
+        id: guard
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "DOCKERHUB_USERNAME/DOCKERHUB_TOKEN secrets not set — Docker build & push will be skipped."
+            echo "docker_enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docker_enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -33,11 +47,9 @@ jobs:
           INPUT_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            # Triggered by a pushed v* tag — build exactly that tag.
             TAG="${{ github.ref_name }}"
             echo "Triggered by tag push: $TAG"
           elif [ -n "$INPUT_TAG" ]; then
-            # A specific release tag was selected for the manual run.
             TAG="$INPUT_TAG"
             echo "Building selected release tag: $TAG"
             if ! git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
@@ -45,7 +57,6 @@ jobs:
               exit 1
             fi
           else
-            # No tag selected — cut a new tag/release from master using package.json version.
             VERSION=$(node -p "require('./package.json').version")
             TAG="v$VERSION"
             echo "No tag selected — using package.json version: $TAG"
@@ -65,36 +76,80 @@ jobs:
           fi
           echo "ref=$TAG" >> "$GITHUB_OUTPUT"
 
-  build-and-push:
+  # Build each architecture natively (no QEMU emulation) and push by digest.
+  build:
     needs: prepare-release
-    runs-on: ubuntu-latest
+    if: needs.prepare-release.outputs.docker_enabled == 'true'
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-    env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
-      - name: Check Docker Hub credentials
-        id: guard
-        run: |
-          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
-            echo "DOCKERHUB_USERNAME/DOCKERHUB_TOKEN secrets not set — skipping Docker build & push."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: actions/checkout@v4
-        if: steps.guard.outputs.enabled == 'true'
         with:
           ref: ${{ needs.prepare-release.outputs.ref }}
 
       - uses: docker/setup-buildx-action@v3
-        if: steps.guard.outputs.enabled == 'true'
 
       - name: Log in to Container Registry
-        if: steps.guard.outputs.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          # GitHub Actions layer cache (per-arch scope) — keeps Docker Hub to a
+          # single multi-arch image with no extra buildcache tags.
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
+          provenance: false
+          sbom: false
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Combine the per-arch digests into a single multi-platform manifest with the real tags.
+  merge:
+    needs: [prepare-release, build]
+    if: needs.prepare-release.outputs.docker_enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -102,7 +157,6 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        if: steps.guard.outputs.enabled == 'true'
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
@@ -112,19 +166,14 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare-release.outputs.ref }}
             type=raw,value=latest
 
-      - name: Build and push
-        if: steps.guard.outputs.enabled == 'true'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
-          platforms: linux/amd64,linux/arm64
-          provenance: false
-          sbom: false
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: docker buildx imagetools inspect ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
   publish-npm:
     needs: prepare-release
