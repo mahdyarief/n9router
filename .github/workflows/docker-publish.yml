@@ -163,7 +163,6 @@ jobs:
           tags: |
             type=sha,prefix=
             type=semver,pattern={{version}},value=${{ needs.prepare-release.outputs.ref }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare-release.outputs.ref }}
             type=raw,value=latest
 
       - name: Create manifest list and push
