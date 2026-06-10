@@ -788,6 +788,75 @@ export async function importDb(payload) {
   return db.data;
 }
 
+export async function selectiveImportDb(payload, sectionModes) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Invalid database payload");
+  }
+  if (!sectionModes || typeof sectionModes !== "object" || Array.isArray(sectionModes)) {
+    throw new Error("Invalid import modes");
+  }
+
+  const db = await getDb();
+  const current = { ...db.data };
+
+  // Array sections supporting merge (deduplicated by id, import wins on conflict)
+  for (const key of ["providerConnections", "providerNodes"]) {
+    const mode = sectionModes[key] || "skip";
+    if (mode === "skip") continue;
+    const imported = Array.isArray(payload[key]) ? payload[key] : [];
+    if (mode === "overwrite") {
+      current[key] = imported;
+    } else if (mode === "merge") {
+      const existing = Array.isArray(current[key]) ? current[key] : [];
+      // Items without an id can't be matched — keep/append them as-is instead of
+      // letting them collapse onto the same undefined Map key.
+      const byId = new Map();
+      const idless = [];
+      for (const item of existing) {
+        if (item?.id != null) byId.set(item.id, item);
+        else idless.push(item);
+      }
+      for (const item of imported) {
+        if (item?.id != null) byId.set(item.id, item);
+        else idless.push(item);
+      }
+      current[key] = [...byId.values(), ...idless];
+    }
+  }
+
+  // Array sections (overwrite/skip only)
+  for (const key of ["proxyPools", "customModels", "combos", "apiKeys"]) {
+    const mode = sectionModes[key] || "skip";
+    if (mode !== "overwrite") continue;
+    current[key] = Array.isArray(payload[key]) ? payload[key] : current[key];
+  }
+
+  // Object sections (overwrite/skip only)
+  for (const key of ["modelAliases", "mitmAlias", "pricing"]) {
+    const mode = sectionModes[key] || "skip";
+    if (mode !== "overwrite") continue;
+    current[key] =
+      payload[key] && typeof payload[key] === "object" && !Array.isArray(payload[key])
+        ? payload[key]
+        : current[key];
+  }
+
+  // Settings (overwrite/skip only)
+  if ((sectionModes.settings || "skip") === "overwrite") {
+    const importedSettings =
+      payload.settings && typeof payload.settings === "object" && !Array.isArray(payload.settings)
+        ? { ...payload.settings }
+        : {};
+    normalizeObservabilitySettings(importedSettings);
+    current.settings = { ...cloneDefaultData().settings, ...importedSettings };
+  }
+
+  const { data: normalized } = ensureDbShape(current);
+  db.data = normalized;
+  await safeWrite(db);
+  return db.data;
+}
+
 export async function isCloudEnabled() {
   const settings = await getSettings();
   return settings.cloudEnabled === true;

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Card, Button, Toggle, Input } from "@/shared/components";
+import ImportSettingsModal from "@/shared/components/ImportSettingsModal";
 import { useTheme } from "@/shared/hooks/useTheme";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { cn } from "@/shared/utils/cn";
@@ -32,6 +33,9 @@ export default function ProfilePage() {
   const [oidcRedirectUri, setOidcRedirectUri] = useState("/api/auth/oidc/callback");
   const [oidcExpanded, setOidcExpanded] = useState(false);
   const importFileRef = useRef(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importPayload, setImportPayload] = useState(null);
+  const [importKey, setImportKey] = useState(0);
   const [proxyForm, setProxyForm] = useState({
     outboundProxyEnabled: false,
     outboundProxyUrl: "",
@@ -631,32 +635,42 @@ export default function ProfilePage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setDbLoading(true);
-    setDbStatus({ type: "", message: "" });
+    if (importFileRef.current) importFileRef.current.value = "";
 
     try {
       const raw = await file.text();
       const payload = JSON.parse(raw);
+      setImportPayload(payload);
+      setImportKey((k) => k + 1);
+      setImportModalOpen(true);
+    } catch (err) {
+      setDbStatus({ type: "error", message: err.message || "Invalid backup file" });
+    }
+  };
 
-      const res = await fetch("/api/settings/database", {
+  const handleConfirmImport = async (modes) => {
+    if (!importPayload) return;
+
+    setDbLoading(true);
+    setDbStatus({ type: "", message: "" });
+
+    try {
+      const res = await fetch("/api/settings/database/selective", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ payload: importPayload, modes }),
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to import database");
-      }
+      if (!res.ok) throw new Error(data.error || "Failed to import database");
 
+      setImportModalOpen(false);
+      setImportPayload(null);
       await reloadSettings();
-      setDbStatus({ type: "success", message: "Database imported successfully" });
+      setDbStatus({ type: "success", message: "Settings imported successfully" });
     } catch (err) {
-      setDbStatus({ type: "error", message: err.message || "Invalid backup file" });
+      setDbStatus({ type: "error", message: err.message || "Failed to import database" });
     } finally {
-      if (importFileRef.current) {
-        importFileRef.current.value = "";
-      }
       setDbLoading(false);
     }
   };
@@ -1328,6 +1342,16 @@ export default function ProfilePage() {
           <p className="mt-1">Local Mode - All data stored on your machine</p>
         </div>
       </div>
+
+      <ImportSettingsModal
+        key={importKey}
+        isOpen={importModalOpen}
+        onClose={() => { setImportModalOpen(false); setImportPayload(null); }}
+        onConfirm={handleConfirmImport}
+        payload={importPayload}
+        loading={dbLoading}
+      />
+
     </div>
   );
 }
