@@ -79,3 +79,8 @@ scripts/agSniffer/*
 gitbooks/*
 .commandcode
 gitbook/README.md
+
+# Runtime data (not tracked)
+.env
+entrypoint-wrapper.sh
+data/
