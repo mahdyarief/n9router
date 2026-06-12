@@ -9,8 +9,7 @@ const path = require("path");
 const http = require("http");
 const crypto = require("crypto");
 // Replaced node-machine-id (missing from standalone build) with crypto fallback
-// The machine-id file is still checked first by loadRawMachineId()
-const crypto = require("crypto");
+// crypto (above) is reused; machine-id file is still checked first by loadRawMachineId()
 function machineIdSync() { return crypto.randomUUID(); }
 const { DATA_DIR } = require("./paths");
 const { log } = require("./logger");
