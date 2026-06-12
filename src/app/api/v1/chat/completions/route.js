@@ -33,3 +33,16 @@ export async function POST(request) {
   return await handleChat(request);
 }
 
+/**
+ * Increase body size limit for large context windows and tool call sequences.
+ * Default is 1MB which silently truncates large requests causing 400 errors
+ * from upstream providers (Kiro, Antigravity).
+ */
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "50mb"
+    }
+  }
+};
+

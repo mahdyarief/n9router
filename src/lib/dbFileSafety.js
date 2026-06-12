@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const lockfile = require("proper-lockfile");
+const lockfile = require("./stubs/proper-lockfile.js");
 
 const LOCK_OPTIONS = {
   retries: { retries: 15, minTimeout: 50, maxTimeout: 3000 },

@@ -8,7 +8,10 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const crypto = require("crypto");
-const { machineIdSync } = require("node-machine-id");
+// Replaced node-machine-id (missing from standalone build) with crypto fallback
+// The machine-id file is still checked first by loadRawMachineId()
+const crypto = require("crypto");
+function machineIdSync() { return crypto.randomUUID(); }
 const { DATA_DIR } = require("./paths");
 const { log } = require("./logger");
 const { updateJsonFileSync } = require("../lib/dbFileSafety.js");
@@ -634,7 +637,7 @@ function loadRawMachineId() {
   } catch {}
 
   try {
-    cachedRawMachineId = machineIdSync();
+    cachedRawMachineId = machineIdSync(); // crypto.randomUUID() fallback
   } catch {
     cachedRawMachineId = crypto.randomUUID();
   }

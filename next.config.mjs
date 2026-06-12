@@ -18,6 +18,14 @@ const nextConfig = {
     "/*": ["src/mitm/**/*", "src/shared/constants/**/*", "src/lib/dbFileSafety.js", "open-sse/rtk/**/*"],
   },
   serverExternalPackages: ["better-sqlite3"],
+  // Increase body size limit for large context windows and tool call sequences.
+  // Without this, Next.js silently truncates bodies >1MB (default) causing 400 errors
+  // from upstream providers (Kiro, Antigravity).
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "50mb"
+    }
+  },
   turbopack: {
     root: tracingRoot
   },

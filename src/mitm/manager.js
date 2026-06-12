@@ -119,8 +119,8 @@ function killProcess(pid, force = false, sudoPassword = null) {
 
 function deriveKey() {
   try {
-    const { machineIdSync } = require("node-machine-id");
-    const raw = machineIdSync();
+    // Replaced node-machine-id (missing from standalone build) with crypto fallback
+    const raw = crypto.randomUUID();
     return crypto.createHash("sha256").update(raw + ENCRYPT_SALT).digest();
   } catch {
     return crypto.createHash("sha256").update(ENCRYPT_SALT).digest();

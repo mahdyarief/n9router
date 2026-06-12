@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const lockfile = require("proper-lockfile");
+const lockfile = require("./stubs/proper-lockfile.js");
 const { LOCK_OPTIONS } = require("./dbFileSafety.js");
 
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
