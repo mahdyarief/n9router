@@ -1,6 +1,17 @@
 const fs = require("fs");
 const path = require("path");
-const lockfile = require("./stubs/proper-lockfile.js");
+// proper-lockfile missing from standalone build (MITM child process) — fall back to no-op stub.
+let lockfile;
+try {
+  lockfile = require("proper-lockfile");
+} catch {
+  lockfile = {
+    lockSync: () => () => {},
+    lock: () => Promise.resolve(() => {}),
+    unlock: () => Promise.resolve(),
+    check: () => Promise.resolve(false),
+  };
+}
 const { LOCK_OPTIONS } = require("./dbFileSafety.js");
 
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;

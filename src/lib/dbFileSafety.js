@@ -1,6 +1,19 @@
 const fs = require("fs");
 const path = require("path");
-const lockfile = require("./stubs/proper-lockfile.js");
+// proper-lockfile is missing from the Next.js standalone build used by the
+// MITM child process. Try the real module (present in main Next.js process),
+// fall back to an inline no-op stub (MITM process — SQLite handles locking).
+let lockfile;
+try {
+  lockfile = require("proper-lockfile");
+} catch {
+  lockfile = {
+    lockSync: () => () => {},
+    lock: () => Promise.resolve(() => {}),
+    unlock: () => Promise.resolve(),
+    check: () => Promise.resolve(false),
+  };
+}
 
 const LOCK_OPTIONS = {
   retries: { retries: 15, minTimeout: 50, maxTimeout: 3000 },
