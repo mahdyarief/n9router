@@ -341,3 +341,184 @@ export function cleanJSONSchemaForAntigravity(schema) {
   return cleaned;
 }
 
+// ============================================================================
+// NORMALIZE: Fix Gemini turn sequence violations
+// ============================================================================
+// Gemini/Antigravity requires strict alternation: user → model → user → model
+// and requires functionCall to be followed by a user turn with functionResponse.
+// Clients (Cursor, Claude Code, etc.) often send sequences that violate these
+// rules. This function normalizes the sequence to always be valid.
+export function normalizeGeminiTurns(contents) {
+  if (!Array.isArray(contents) || contents.length === 0) return contents;
+
+  // Step 1: Merge adjacent turns with the same role
+  const merged = [contents[0]];
+  for (let i = 1; i < contents.length; i++) {
+    const last = merged[merged.length - 1];
+    const cur = contents[i];
+    if (last.role === cur.role) {
+      last.parts = [...(last.parts || []), ...(cur.parts || [])];
+    } else {
+      merged.push({ role: cur.role, parts: [...(cur.parts || [])] });
+    }
+  }
+
+  // Step 2: Insert synthetic functionResponse for orphaned functionCalls
+  // If a model turn contains functionCall but no subsequent user turn has the matching
+  // functionResponse, synthesize one so Gemini doesn't return INVALID_ARGUMENT
+  const result = [];
+  for (let i = 0; i < merged.length; i++) {
+    const turn = merged[i];
+    const funcCalls = (turn.parts || []).filter(p => p.functionCall);
+    result.push(turn);
+
+    if (funcCalls.length > 0 && turn.role === "model") {
+      const nextTurn = merged[i + 1];
+      const hasResponse = nextTurn &&
+        nextTurn.role === "user" &&
+        (nextTurn.parts || []).some(p => p.functionResponse);
+
+      if (!hasResponse) {
+        // Synthesize functionResponse turn
+        const syntheticParts = funcCalls.map(fc => ({
+          functionResponse: {
+            id: fc.functionCall.id,
+            name: fc.functionCall.name || "_unknown",
+            response: {
+              result: {
+                _synthetic: true,
+                message: "Tool response not provided by client"
+              }
+            }
+          }
+        }));
+        result.push({ role: "user", parts: syntheticParts });
+      }
+    }
+  }
+
+  // Step 3: Enforce user ↔ model alternation
+  const output = [];
+  for (let i = 0; i < result.length; i++) {
+    const turn = result[i];
+    const expectedRole = output.length === 0 ? "user" : (output[output.length - 1].role === "user" ? "model" : "user");
+
+    if (turn.role === expectedRole) {
+      output.push(turn);
+      continue;
+    }
+
+    // Special cases for tool call/response sequences
+    const hasFuncCall = (turn.parts || []).some(p => p.functionCall);
+    const hasFuncResponse = (turn.parts || []).some(p => p.functionResponse);
+
+    if (hasFuncCall && expectedRole === "user") {
+      // functionCall needs to be in a model turn, insert padding user turn
+      output.push({ role: "user", parts: [{ text: "Continue." }] });
+      output.push(turn);
+    } else if (hasFuncResponse && expectedRole === "model") {
+      // functionResponse needs to be in a user turn, insert padding model turn
+      output.push({ role: "model", parts: [{ text: "" }] });
+      output.push(turn);
+    } else if (!hasFuncCall && !hasFuncResponse) {
+      // Pure text turn with wrong role — swap role to fit alternation
+      output.push({ role: expectedRole, parts: turn.parts || [] });
+    } else {
+      // Fallback: insert empty padding turn
+      output.push({ role: expectedRole, parts: [{ text: " " }] });
+      output.push(turn);
+    }
+  }
+
+  // Step 4: Ensure first turn is always "user"
+  if (output.length > 0 && output[0].role !== "user") {
+    output.unshift({ role: "user", parts: [{ text: " " }] });
+  }
+
+  // Step 5: Ensure every turn has at least one part
+  for (const turn of output) {
+    if (!turn.parts || turn.parts.length === 0) {
+      turn.parts = [{ text: " " }];
+    }
+  }
+
+  // Step 6: If the last turn has a functionCall, add a synthetic functionResponse
+  // (Gemini requires every functionCall to have a matching functionResponse)
+  const lastTurn = output[output.length - 1];
+  if (lastTurn && (lastTurn.parts || []).some(p => p.functionCall)) {
+    const funcCalls = (lastTurn.parts || []).filter(p => p.functionCall);
+    const responseParts = funcCalls
+      .filter(p => p.functionCall?.id)
+      .map(p => ({
+        functionResponse: {
+          id: p.functionCall.id,
+          name: p.functionCall.name || "_unknown",
+          response: {
+            result: {
+              _synthetic: true,
+              message: "Tool response not provided by client"
+            }
+          }
+        }
+      }));
+    if (responseParts.length > 0) {
+      output.push({ role: "user", parts: responseParts });
+    }
+  }
+
+  return output;
+}
+
+// ============================================================================
+// SMART TRUNCATE: Reduce oversized payloads to fit upstream limits
+// ============================================================================
+// Kiro rejects >8MB, Antigravity/Gemini rejects >6MB, Next.js truncates at 10MB.
+// This function drops middle turns and trims long text/thinking blocks to fit.
+const MAX_SERIALIZED_SIZE = 2 * 1024 * 1024; // 2MB — safe threshold to start truncation
+const TARGET_SERIALIZED_SIZE = 4 * 1024 * 1024; // 4MB — target after truncation
+const MAX_TEXT_BLOCK = 50000; // 50K chars per text block before trimming
+const MAX_THINKING_BLOCK = 20000; // 20K chars per thinking block before trimming
+
+export function smartTruncate(contents) {
+  if (!Array.isArray(contents) || contents.length <= 4) return contents;
+
+  const serialized = JSON.stringify(contents);
+  if (serialized.length <= MAX_SERIALIZED_SIZE) return contents;
+
+  // Strategy: Keep first (system/setup) and last (recent context) turns,
+  // drop middle turns until we're under the target size
+  const head = contents[0];
+  const tail = contents[contents.length - 1];
+  let middle = contents.slice(1, -1);
+
+  // Drop oldest middle turns first (keep most recent)
+  while (middle.length > 1 && JSON.stringify([head, ...middle, tail]).length > TARGET_SERIALIZED_SIZE) {
+    middle = middle.slice(2); // Drop 2 turns at a time to preserve alternation
+  }
+
+  const result = [head, ...middle, tail];
+
+  // Additionally, trim oversized text blocks within remaining turns
+  for (const turn of result) {
+    if (!turn.parts || !Array.isArray(turn.parts)) continue;
+
+    for (const part of turn.parts) {
+      // Trim long text blocks
+      if (part.text && part.text.length > MAX_TEXT_BLOCK) {
+        const originalLen = part.text.length;
+        part.text = part.text.substring(0, 25000)
+          + `\n... [truncated by n9router: original ${originalLen} chars] ...\n`
+          + part.text.substring(part.text.length - 25000);
+      }
+
+      // Trim long thinking/reasoning blocks
+      if (part.thought === true && part.text && part.text.length > MAX_THINKING_BLOCK) {
+        part.text = part.text.substring(0, 10000)
+          + "\n... [thinking truncated] ...\n";
+      }
+    }
+  }
+
+  return result;
+}
+

@@ -16,6 +16,19 @@ async function ensureInitialized() {
 }
 
 /**
+ * Increase body size limit for large context windows and tool call sequences.
+ * Default is 1MB which silently truncates large requests causing 400 errors
+ * from upstream providers (Kiro, Antigravity).
+ */
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "50mb"
+    }
+  }
+};
+
+/**
  * Handle CORS preflight
  */
 export async function OPTIONS() {
